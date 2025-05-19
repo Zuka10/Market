@@ -78,7 +78,7 @@ public class ProductController : ControllerBase
     public ActionResult<Product> GetById(int id)
     {
         var product = products.FirstOrDefault(p => p.Id == id);
-        if (product == null)
+        if (product is null)
         {
             return NotFound();
         }
@@ -93,7 +93,7 @@ public class ProductController : ControllerBase
     [HttpPost]
     public ActionResult<Product> Create([FromBody] Product product)
     {
-        if (product == null)
+        if (product is null)
         {
             return BadRequest();
         }
@@ -106,19 +106,22 @@ public class ProductController : ControllerBase
     /// <summary>
     /// Updates an existing product.
     /// </summary>
-    /// <param name="id">ID of the product to update.</param>
+    /// <param name="id">ID of the product to update (from route).</param>
     /// <param name="product">Updated product object.</param>
-    /// <returns>No content.</returns>
+    /// <returns>Returns 200 OK if successful, 404 if not found, or 400 if request is invalid.</returns>
+    /// <response code="200">A specific category.</response>
+    /// <response code="400">Category is null</response>
+    /// <response code="404">No category with the provided Id were found.</response>
     [HttpPut("{id}")]
-    public ActionResult<Product> Update(int id, [FromBody] Product product)
+    public ActionResult<Product> Update([FromRoute] int id, [FromBody] Product product)
     {
-        if (product == null)
+        if (product is null)
         {
             return BadRequest();
         }
 
         var existingProduct = products.FirstOrDefault(p => p.Id == id);
-        if (existingProduct == null)
+        if (existingProduct is null)
         {
             return NotFound();
         }
@@ -129,7 +132,7 @@ public class ProductController : ControllerBase
         existingProduct.Stock = product.Stock;
         existingProduct.CategoryId = product.CategoryId;
 
-        return NoContent();
+        return Ok();
     }
 
     /// <summary>
@@ -141,12 +144,12 @@ public class ProductController : ControllerBase
     public ActionResult Delete(int id)
     {
         var product = products.FirstOrDefault(p => p.Id == id);
-        if (product == null)
+        if (product is null)
         {
             return NotFound();
         }
 
         products.Remove(product);
-        return NoContent();
+        return Ok();
     }
 }

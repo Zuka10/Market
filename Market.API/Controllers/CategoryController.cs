@@ -57,7 +57,7 @@ public class CategoryController : ControllerBase
     public ActionResult<Category> GetById(int id)
     {
         var category = categories.FirstOrDefault(c => c.Id == id);
-        if (category == null)
+        if (category is null)
         {
             return NotFound();
         }
@@ -72,7 +72,7 @@ public class CategoryController : ControllerBase
     [HttpPost]
     public ActionResult<Category> Create([FromBody] Category category)
     {
-        if (category == null)
+        if (category is null)
         {
             return BadRequest();
         }
@@ -85,19 +85,22 @@ public class CategoryController : ControllerBase
     /// <summary>
     /// Updates an existing category.
     /// </summary>
-    /// <param name="id">ID of the category to update.</param>
+    /// <param name="id">ID of the category to update (from route).</param>
     /// <param name="category">Updated category object.</param>
-    /// <returns>No content.</returns>
+    /// <returns>Returns 200 OK if successful, 404 if not found, or 400 if request is invalid.</returns>
+    /// <response code="200">A specific category.</response>
+    /// <response code="400">Category is null</response>
+    /// <response code="404">No category with the provided Id were found.</response>
     [HttpPut("{id}")]
-    public ActionResult<Category> Update(int id, [FromBody] Category category)
+    public ActionResult<Category> Update([FromRoute] int id, [FromBody] Category category)
     {
-        if (category == null)
+        if (category is null)
         {
             return BadRequest();
         }
 
         var existingCategory = categories.FirstOrDefault(c => c.Id == id);
-        if (existingCategory == null)
+        if (existingCategory is null)
         {
             return NotFound();
         }
@@ -105,24 +108,24 @@ public class CategoryController : ControllerBase
         existingCategory.Name = category.Name;
         existingCategory.Description = category.Description;
 
-        return NoContent();
+        return Ok();
     }
 
     /// <summary>
     /// Deletes an category by ID.
     /// </summary>
     /// <param name="id">ID of the category to delete.</param>
-    /// <returns>No content.</returns>
+    /// <returns>Ok.</returns>
     [HttpDelete("{id}")]
     public ActionResult Delete(int id)
     {
         var category = categories.FirstOrDefault(c => c.Id == id);
-        if (category == null)
+        if (category is null)
         {
             return NotFound();
         }
 
         categories.Remove(category);
-        return NoContent();
+        return Ok();
     }
 }

@@ -70,7 +70,7 @@ public class PaymentController : ControllerBase
     public ActionResult<Payment> GetById(int id)
     {
         var payment = payments.FirstOrDefault(p => p.Id == id);
-        if (payment == null)
+        if (payment is null)
         {
             return NotFound();
         }
@@ -85,7 +85,7 @@ public class PaymentController : ControllerBase
     [HttpPost]
     public ActionResult<Payment> Create([FromBody] Payment payment)
     {
-        if (payment == null)
+        if (payment is null)
         {
             return BadRequest("Payment cannot be null.");
         }
@@ -98,19 +98,22 @@ public class PaymentController : ControllerBase
     /// <summary>
     /// Updates an existing payment.
     /// </summary>
-    /// <param name="id">ID of the payment to update.</param>
+    /// <param name="id">ID of the payment to update (from route).</param>
     /// <param name="payment">Updated payment object.</param>
-    /// <returns>No content.</returns>
+    /// <returns>Returns 200 OK if successful, 404 if not found, or 400 if request is invalid.</returns>
+    /// <response code="200">A specific payment.</response>
+    /// <response code="400">Payment is null</response>
+    /// <response code="404">No payment with the provided Id were found.</response>
     [HttpPut("{id}")]
-    public ActionResult Update(int id, [FromBody] Payment payment)
+    public ActionResult Update([FromRoute] int id, [FromBody] Payment payment)
     {
-        if (payment == null)
+        if (payment is null)
         {
             return BadRequest("Payment cannot be null.");
         }
 
         var existingPayment = payments.FirstOrDefault(p => p.Id == id);
-        if (existingPayment == null)
+        if (existingPayment is null)
         {
             return NotFound();
         }
@@ -120,7 +123,7 @@ public class PaymentController : ControllerBase
         existingPayment.PaymentDate = payment.PaymentDate;
         existingPayment.Status = payment.Status;
 
-        return NoContent();
+        return Ok();
     }
 
 
@@ -133,12 +136,12 @@ public class PaymentController : ControllerBase
     public ActionResult Delete(int id)
     {
         var payment = payments.FirstOrDefault(p => p.Id == id);
-        if (payment == null)
+        if (payment is null)
         {
             return NotFound();
         }
 
         payments.Remove(payment);
-        return NoContent();
+        return Ok();
     }
 }

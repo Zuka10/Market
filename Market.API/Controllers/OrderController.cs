@@ -95,7 +95,7 @@ public class OrderController : ControllerBase
     public ActionResult<Order> GetById(int id)
     {
         var order = orders.FirstOrDefault(o => o.Id == id);
-        if (order == null)
+        if (order is null)
         {
             return NotFound();
         }
@@ -110,7 +110,7 @@ public class OrderController : ControllerBase
     [HttpPost]
     public ActionResult<Order> Create([FromBody] Order order)
     {
-        if (order == null)
+        if (order is null)
         {
             return BadRequest();
         }
@@ -123,19 +123,22 @@ public class OrderController : ControllerBase
     /// <summary>
     /// Updates an existing order.
     /// </summary>
-    /// <param name="id">ID of the order to update.</param>
+    /// <param name="id">ID of the order to update (from route).</param>
     /// <param name="order">Updated order object.</param>
-    /// <returns>No content.</returns>
+    /// <returns>Returns 200 OK if successful, 404 if not found, or 400 if request is invalid.</returns>
+    /// <response code="200">A specific order.</response>
+    /// <response code="400">Order is null</response>
+    /// <response code="404">No order with the provided Id were found.</response>
     [HttpPut("{id}")]
-    public ActionResult<Order> Update(int id, [FromBody] Order order)
+    public ActionResult<Order> Update([FromRoute] int id, [FromBody] Order order)
     {
-        if (order == null)
+        if (order is null)
         {
             return BadRequest();
         }
 
         var existingOrder = orders.FirstOrDefault(o => o.Id == id);
-        if (existingOrder == null)
+        if (existingOrder is null)
         {
             return NotFound();
         }
@@ -144,24 +147,24 @@ public class OrderController : ControllerBase
         existingOrder.OrderDate = order.OrderDate;
         existingOrder.OrderDetails = order.OrderDetails;
 
-        return NoContent();
+        return Ok();
     }
 
     /// <summary>
     /// Deletes an order by ID.
     /// </summary>
     /// <param name="id">ID of the order to delete.</param>
-    /// <returns>No content.</returns>
+    /// <returns>Ok.</returns>
     [HttpDelete("{id}")]
     public ActionResult Delete(int id)
     {
         var order = orders.FirstOrDefault(o => o.Id == id);
-        if (order == null)
+        if (order is null)
         {
             return NotFound();
         }
 
         orders.Remove(order);
-        return NoContent();
+        return Ok();
     }
 }
