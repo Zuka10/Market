@@ -10,7 +10,7 @@ namespace Market.API.Controllers;
 [Route("[controller]")]
 public class CategoryController : ControllerBase
 {
-    private static readonly List<Category> categories =
+    private static readonly List<Category> _categories =
     [
         new Category
         {
@@ -45,7 +45,7 @@ public class CategoryController : ControllerBase
     [HttpGet]
     public ActionResult<IEnumerable<Category>> GetAll()
     {
-        return Ok(categories);
+        return Ok(_categories);
     }
 
     /// <summary>
@@ -56,7 +56,7 @@ public class CategoryController : ControllerBase
     [HttpGet("{id}")]
     public ActionResult<Category> GetById(int id)
     {
-        var category = categories.FirstOrDefault(c => c.Id == id);
+        var category = _categories.FirstOrDefault(c => c.Id == id);
         if (category is null)
         {
             return NotFound();
@@ -77,8 +77,8 @@ public class CategoryController : ControllerBase
             return BadRequest();
         }
 
-        category.Id = categories.Max(c => c.Id) + 1;
-        categories.Add(category);
+        category.Id = _categories.Max(c => c.Id) + 1;
+        _categories.Add(category);
         return CreatedAtAction(nameof(GetById), new { id = category.Id }, category);
     }
 
@@ -99,7 +99,7 @@ public class CategoryController : ControllerBase
             return BadRequest();
         }
 
-        var existingCategory = categories.FirstOrDefault(c => c.Id == id);
+        var existingCategory = _categories.FirstOrDefault(c => c.Id == id);
         if (existingCategory is null)
         {
             return NotFound();
@@ -119,13 +119,13 @@ public class CategoryController : ControllerBase
     [HttpDelete("{id}")]
     public ActionResult Delete(int id)
     {
-        var category = categories.FirstOrDefault(c => c.Id == id);
+        var category = _categories.FirstOrDefault(c => c.Id == id);
         if (category is null)
         {
             return NotFound();
         }
 
-        categories.Remove(category);
+        _categories.Remove(category);
         return Ok();
     }
 }

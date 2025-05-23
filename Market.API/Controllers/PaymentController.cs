@@ -11,7 +11,7 @@ namespace Market.API.Controllers;
 [ApiController]
 public class PaymentController : ControllerBase
 {
-    private static readonly List<Payment> payments =
+    private static readonly List<Payment> _payments =
     [
          new Payment
          {
@@ -58,7 +58,7 @@ public class PaymentController : ControllerBase
     [HttpGet]
     public ActionResult<IEnumerable<Payment>> GetAll()
     {
-        return Ok(payments);
+        return Ok(_payments);
     }
 
     /// <summary>
@@ -69,7 +69,7 @@ public class PaymentController : ControllerBase
     [HttpGet("{id}")]
     public ActionResult<Payment> GetById(int id)
     {
-        var payment = payments.FirstOrDefault(p => p.Id == id);
+        var payment = _payments.FirstOrDefault(p => p.Id == id);
         if (payment is null)
         {
             return NotFound();
@@ -90,8 +90,8 @@ public class PaymentController : ControllerBase
             return BadRequest("Payment cannot be null.");
         }
 
-        payment.Id = payments.Max(p => p.Id) + 1;
-        payments.Add(payment);
+        payment.Id = _payments.Max(p => p.Id) + 1;
+        _payments.Add(payment);
         return CreatedAtAction(nameof(GetById), new { id = payment.Id }, payment);
     }
 
@@ -112,7 +112,7 @@ public class PaymentController : ControllerBase
             return BadRequest("Payment cannot be null.");
         }
 
-        var existingPayment = payments.FirstOrDefault(p => p.Id == id);
+        var existingPayment = _payments.FirstOrDefault(p => p.Id == id);
         if (existingPayment is null)
         {
             return NotFound();
@@ -135,13 +135,13 @@ public class PaymentController : ControllerBase
     [HttpDelete("{id}")]
     public ActionResult Delete(int id)
     {
-        var payment = payments.FirstOrDefault(p => p.Id == id);
+        var payment = _payments.FirstOrDefault(p => p.Id == id);
         if (payment is null)
         {
             return NotFound();
         }
 
-        payments.Remove(payment);
+        _payments.Remove(payment);
         return Ok();
     }
 }

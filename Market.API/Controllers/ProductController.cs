@@ -10,7 +10,7 @@ namespace Market.API.Controllers;
 [ApiController]
 public class ProductController : ControllerBase
 {
-    private static readonly List<Product> products =
+    private static readonly List<Product> _products =
     [
         new Product
         {
@@ -66,7 +66,7 @@ public class ProductController : ControllerBase
     [HttpGet]
     public ActionResult<IEnumerable<Product>> GetAll()
     {
-        return Ok(products);
+        return Ok(_products);
     }
 
     /// <summary>
@@ -77,7 +77,7 @@ public class ProductController : ControllerBase
     [HttpGet("{id}")]
     public ActionResult<Product> GetById(int id)
     {
-        var product = products.FirstOrDefault(p => p.Id == id);
+        var product = _products.FirstOrDefault(p => p.Id == id);
         if (product is null)
         {
             return NotFound();
@@ -98,8 +98,8 @@ public class ProductController : ControllerBase
             return BadRequest();
         }
 
-        product.Id = products.Max(p => p.Id) + 1;
-        products.Add(product);
+        product.Id = _products.Max(p => p.Id) + 1;
+        _products.Add(product);
         return CreatedAtAction(nameof(GetById), new { id = product.Id }, product);
     }
 
@@ -120,7 +120,7 @@ public class ProductController : ControllerBase
             return BadRequest();
         }
 
-        var existingProduct = products.FirstOrDefault(p => p.Id == id);
+        var existingProduct = _products.FirstOrDefault(p => p.Id == id);
         if (existingProduct is null)
         {
             return NotFound();
@@ -143,13 +143,13 @@ public class ProductController : ControllerBase
     [HttpDelete("{id}")]
     public ActionResult Delete(int id)
     {
-        var product = products.FirstOrDefault(p => p.Id == id);
+        var product = _products.FirstOrDefault(p => p.Id == id);
         if (product is null)
         {
             return NotFound();
         }
 
-        products.Remove(product);
+        _products.Remove(product);
         return Ok();
     }
 }
