@@ -10,7 +10,7 @@ namespace Market.API.Controllers;
 [ApiController]
 public class OrderController : ControllerBase
 {
-    private static readonly List<Order> orders =
+    private static readonly List<Order> _orders =
     [
         new Order
         {
@@ -83,7 +83,7 @@ public class OrderController : ControllerBase
     [HttpGet]
     public ActionResult<IEnumerable<Order>> GetAll()
     {
-        return Ok(orders);
+        return Ok(_orders);
     }
 
     /// <summary>
@@ -94,7 +94,7 @@ public class OrderController : ControllerBase
     [HttpGet("{id}")]
     public ActionResult<Order> GetById(int id)
     {
-        var order = orders.FirstOrDefault(o => o.Id == id);
+        var order = _orders.FirstOrDefault(o => o.Id == id);
         if (order is null)
         {
             return NotFound();
@@ -115,8 +115,8 @@ public class OrderController : ControllerBase
             return BadRequest();
         }
 
-        order.Id = orders.Max(o => o.Id) + 1;
-        orders.Add(order);
+        order.Id = _orders.Max(o => o.Id) + 1;
+        _orders.Add(order);
         return CreatedAtAction(nameof(GetById), new { id = order.Id }, order);
     }
 
@@ -137,7 +137,7 @@ public class OrderController : ControllerBase
             return BadRequest();
         }
 
-        var existingOrder = orders.FirstOrDefault(o => o.Id == id);
+        var existingOrder = _orders.FirstOrDefault(o => o.Id == id);
         if (existingOrder is null)
         {
             return NotFound();
@@ -158,13 +158,13 @@ public class OrderController : ControllerBase
     [HttpDelete("{id}")]
     public ActionResult Delete(int id)
     {
-        var order = orders.FirstOrDefault(o => o.Id == id);
+        var order = _orders.FirstOrDefault(o => o.Id == id);
         if (order is null)
         {
             return NotFound();
         }
 
-        orders.Remove(order);
+        _orders.Remove(order);
         return Ok();
     }
 }
