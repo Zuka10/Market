@@ -1,3 +1,4 @@
+using Market.Domain.Entities.Market;
 using Market.Infrastructure.Data;
 using NetArchTest.Rules;
 
@@ -13,34 +14,34 @@ public class ArchitectureTests
     [Test]
     public void Domain_Should_Not_HaveDependencyOn_Application_Infrastructure_Api()
     {
-        var result = Types.InAssembly(typeof(Market.Domain.Entities.Product).Assembly)
+        var result = Types.InAssembly(typeof(Product).Assembly)
             .ShouldNot()
             .HaveDependencyOnAny(ApplicationNamespace, InfrastructureNamespace, ApiNamespace)
             .GetResult();
 
-        Assert.IsTrue(result.IsSuccessful, "Domain should not depend on Application, Infrastructure, or API.");
+        Assert.That(result.IsSuccessful, Is.True, "Domain should not depend on Application, Infrastructure, or API.");
     }
 
     [Test]
     public void Application_Should_OnlyDependOn_Domain()
     {
-        var result = Types.InAssembly(typeof(Market.Application.Class1).Assembly)
+        var result = Types.InAssembly(typeof(Market.Application.DependecyInjection).Assembly)
             .ShouldNot()
             .HaveDependencyOnAny(InfrastructureNamespace, ApiNamespace)
             .GetResult();
 
-        Assert.IsTrue(result.IsSuccessful, "Application should not depend on Infrastructure or API.");
+        Assert.That(result.IsSuccessful, Is.True, "Application should not depend on Infrastructure or API.");
     }
 
     [Test]
     public void Infrastructure_CanDependOn_Application_And_Domain_ButNotApi()
     {
-        var result = Types.InAssembly(typeof(MarketDbContext).Assembly)
+        var result = Types.InAssembly(typeof(Market.Infrastructure.DependencyInjection).Assembly)
             .ShouldNot()
             .HaveDependencyOn(ApiNamespace)
             .GetResult();
 
-        Assert.IsTrue(result.IsSuccessful, "Infrastructure should not depend on API.");
+        Assert.That(result.IsSuccessful, Is.True, "Infrastructure should not depend on API.");
     }
 
     [Test]
@@ -51,6 +52,6 @@ public class ArchitectureTests
             .HaveDependencyOn("Market.Test")
             .GetResult();
 
-        Assert.IsTrue(result.IsSuccessful, "API should not depend on test project.");
+        Assert.That(result.IsSuccessful, Is.True, "API should not depend on test project.");
     }
 }
