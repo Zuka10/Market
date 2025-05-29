@@ -197,7 +197,7 @@ public class OrderDetailRepository(IDbConnectionFactory connectionFactory) :
 
         var duplicateCheckSql = $"SELECT COUNT(1) FROM {FullTableName} WHERE OrderId = @OrderId AND ProductId = @ProductId";
         var duplicateExists = await connection.QuerySingleAsync<int>(duplicateCheckSql,
-            new { OrderId = entity.OrderId, ProductId = entity.ProductId });
+            new { entity.OrderId, entity.ProductId });
 
         if (duplicateExists > 0)
         {
