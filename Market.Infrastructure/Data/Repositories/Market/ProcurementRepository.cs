@@ -13,7 +13,9 @@ public class ProcurementRepository(IDbConnectionFactory connectionFactory) :
     {
         using var connection = await _connectionFactory.CreateConnectionAsync();
         var sql = $"SELECT * FROM {FullTableName} WHERE ReferenceNo = @ReferenceNo";
-        return await connection.QueryFirstOrDefaultAsync<Procurement>(sql, new { ReferenceNo = referenceNo });
+        var procurement = await connection.QueryFirstOrDefaultAsync<Procurement>(sql, new { ReferenceNo = referenceNo });
+
+        return procurement ?? throw new KeyNotFoundException($"Procurement with reference number '{referenceNo}' was not found.");
     }
 
     public async Task<Procurement?> GetProcurementWithDetailsAsync(long id)
@@ -57,7 +59,8 @@ public class ProcurementRepository(IDbConnectionFactory connectionFactory) :
             new { Id = id },
             splitOn: "Id,Id,Id,Id");
 
-        return procurementDict.Values.FirstOrDefault();
+        var result = procurementDict.Values.FirstOrDefault();
+        return result ?? throw new KeyNotFoundException($"Procurement with ID '{id}' was not found.");
     }
 
     public async Task<IEnumerable<Procurement>> GetProcurementsWithDetailsAsync()
@@ -86,6 +89,14 @@ public class ProcurementRepository(IDbConnectionFactory connectionFactory) :
 
     public async Task<IEnumerable<Procurement>> GetProcurementsByVendorAsync(long vendorId)
     {
+        using var vendorConnection = await _connectionFactory.CreateConnectionAsync();
+        var vendorCheckSql = "SELECT COUNT(1) FROM market.Vendor WHERE Id = @VendorId";
+        var vendorExists = await vendorConnection.QuerySingleAsync<int>(vendorCheckSql, new { VendorId = vendorId });
+        if (vendorExists == 0)
+        {
+            throw new KeyNotFoundException($"Vendor with ID '{vendorId}' was not found.");
+        }
+
         using var connection = await _connectionFactory.CreateConnectionAsync();
         var sql = $"SELECT * FROM {FullTableName} WHERE VendorId = @VendorId ORDER BY ProcurementDate DESC";
         return await connection.QueryAsync<Procurement>(sql, new { VendorId = vendorId });
@@ -93,6 +104,14 @@ public class ProcurementRepository(IDbConnectionFactory connectionFactory) :
 
     public async Task<IEnumerable<Procurement>> GetProcurementsByLocationAsync(long locationId)
     {
+        using var locationConnection = await _connectionFactory.CreateConnectionAsync();
+        var locationCheckSql = "SELECT COUNT(1) FROM market.Location WHERE Id = @LocationId";
+        var locationExists = await locationConnection.QuerySingleAsync<int>(locationCheckSql, new { LocationId = locationId });
+        if (locationExists == 0)
+        {
+            throw new KeyNotFoundException($"Location with ID '{locationId}' was not found.");
+        }
+
         using var connection = await _connectionFactory.CreateConnectionAsync();
         var sql = $"SELECT * FROM {FullTableName} WHERE LocationId = @LocationId ORDER BY ProcurementDate DESC";
         return await connection.QueryAsync<Procurement>(sql, new { LocationId = locationId });
@@ -153,6 +172,110 @@ public class ProcurementRepository(IDbConnectionFactory connectionFactory) :
         var sql = $"SELECT COUNT(1) FROM {FullTableName} WHERE ReferenceNo = @ReferenceNo";
         var count = await connection.QuerySingleAsync<int>(sql, new { ReferenceNo = referenceNo });
         return count > 0;
+    }
+
+    public override async Task UpdateAsync(Procurement entity)
+    {
+        using var connection = await _connectionFactory.CreateConnectionAsync();
+        var referenceCheckSql = $"SELECT COUNT(1) FROM {FullTableName} WHERE ReferenceNo = @ReferenceNo AND Id != @Id";
+        var referenceExists = await connection.QuerySingleAsync<int>(referenceCheckSql, new { ReferenceNo = entity.ReferenceNo, Id = entity.Id });
+        if (referenceExists > 0)
+        {
+            throw new ArgumentException($"Procurement reference number '{entity.ReferenceNo}' is already taken by another procurement.");
+        }
+
+        await ValidateForeignKeys(entity);
+
+        ValidateProcurementRules(entity);
+
+        await base.UpdateAsync(entity);
+    }
+
+    public override async Task<Procurement> AddAsync(Procurement entity)
+    {
+        if (await IsReferenceNoExistsAsync(entity.ReferenceNo!))
+        {
+            throw new ArgumentException($"Procurement reference number '{entity.ReferenceNo}' is already taken.");
+        }
+
+        await ValidateForeignKeys(entity);
+
+        ValidateProcurementRules(entity);
+
+        if (entity.ProcurementDate > DateTime.UtcNow.AddDays(1))
+        {
+            throw new ArgumentException("Procurement date cannot be more than 1 day in the future.");
+        }
+
+        return entity.ProcurementDate < DateTime.UtcNow.AddYears(-5)
+            ? throw new ArgumentException("Procurement date cannot be more than 5 years in the past.")
+            : await base.AddAsync(entity);
+    }
+
+    public override async Task DeleteAsync(long id)
+    {
+        using var connection = await _connectionFactory.CreateConnectionAsync();
+        var detailsCheckSql = "SELECT COUNT(1) FROM market.ProcurementDetail WHERE ProcurementId = @ProcurementId";
+        var hasDetails = await connection.QuerySingleAsync<int>(detailsCheckSql, new { ProcurementId = id });
+        if (hasDetails > 0)
+        {
+            throw new InvalidOperationException($"Cannot delete procurement with ID '{id}' because it has associated procurement details. Remove all details first.");
+        }
+
+        await base.DeleteAsync(id);
+    }
+
+    private async Task ValidateForeignKeys(Procurement entity)
+    {
+        using var connection = await _connectionFactory.CreateConnectionAsync();
+
+        var vendorCheckSql = "SELECT COUNT(1) FROM market.Vendor WHERE Id = @VendorId";
+        var vendorExists = await connection.QuerySingleAsync<int>(vendorCheckSql, new { VendorId = entity.VendorId });
+        if (vendorExists == 0)
+        {
+            throw new ArgumentException($"Vendor with ID '{entity.VendorId}' does not exist.");
+        }
+
+        var locationCheckSql = "SELECT COUNT(1) FROM market.Location WHERE Id = @LocationId AND IsActive = 1";
+        var locationExists = await connection.QuerySingleAsync<int>(locationCheckSql, new { LocationId = entity.LocationId });
+        if (locationExists == 0)
+        {
+            throw new ArgumentException($"Location with ID '{entity.LocationId}' does not exist or is not active.");
+        }
+    }
+
+    private static void ValidateProcurementRules(Procurement entity)
+    {
+        if (string.IsNullOrWhiteSpace(entity.ReferenceNo))
+        {
+            throw new ArgumentException("Procurement reference number is required.");
+        }
+
+        if (entity.ReferenceNo.Length > 50)
+        {
+            throw new ArgumentException("Procurement reference number cannot exceed 50 characters.");
+        }
+
+        if (entity.TotalAmount < 0)
+        {
+            throw new ArgumentException("Procurement total amount cannot be negative.");
+        }
+
+        if (entity.TotalAmount > 10000000) // Reasonable upper limit
+        {
+            throw new ArgumentException("Procurement total amount cannot exceed $10,000,000.");
+        }
+
+        if (entity.Notes?.Length > 1000)
+        {
+            throw new ArgumentException("Procurement notes cannot exceed 1000 characters.");
+        }
+
+        // Business rule: Reference number should follow a pattern (example)
+        if (!System.Text.RegularExpressions.Regex.IsMatch(entity.ReferenceNo, @"^[A-Z]{2,3}-\d{4,6}$"))
+        {
+            throw new ArgumentException("Procurement reference number must follow the format: XX-NNNN or XXX-NNNNNN (e.g., PR-001234).");
+        }
     }
 
     protected override string GenerateInsertQuery()

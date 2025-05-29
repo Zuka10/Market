@@ -13,7 +13,9 @@ public class CategoryRepository(IDbConnectionFactory connectionFactory) :
     {
         using var connection = await _connectionFactory.CreateConnectionAsync();
         var sql = $"SELECT * FROM {FullTableName} WHERE Name = @Name";
-        return await connection.QueryFirstOrDefaultAsync<Category>(sql, new { Name = name });
+        var category = await connection.QueryFirstOrDefaultAsync<Category>(sql, new { Name = name });
+
+        return category ?? throw new KeyNotFoundException($"Category with name '{name}' was not found.");
     }
 
     public async Task<Category?> GetCategoryWithProductsAsync(long id)
@@ -48,7 +50,8 @@ public class CategoryRepository(IDbConnectionFactory connectionFactory) :
             new { Id = id },
             splitOn: "Id");
 
-        return categoryDict.Values.FirstOrDefault();
+        var result = categoryDict.Values.FirstOrDefault();
+        return result ?? throw new KeyNotFoundException($"Category with ID '{id}' was not found.");
     }
 
     public async Task<IEnumerable<Category>> GetCategoriesWithProductsAsync()
@@ -94,6 +97,11 @@ public class CategoryRepository(IDbConnectionFactory connectionFactory) :
 
     public async Task<int> GetProductCountByCategoryAsync(long categoryId)
     {
+        if (!await ExistsAsync(categoryId))
+        {
+            throw new KeyNotFoundException($"Category with ID '{categoryId}' was not found.");
+        }
+
         using var connection = await _connectionFactory.CreateConnectionAsync();
         var sql = "SELECT COUNT(*) FROM market.Product WHERE CategoryId = @CategoryId AND IsAvailable = 1";
         return await connection.QuerySingleAsync<int>(sql, new { CategoryId = categoryId });
@@ -105,6 +113,40 @@ public class CategoryRepository(IDbConnectionFactory connectionFactory) :
         var sql = $"SELECT COUNT(1) FROM {FullTableName} WHERE Name = @Name";
         var count = await connection.QuerySingleAsync<int>(sql, new { Name = name });
         return count > 0;
+    }
+
+    public override async Task UpdateAsync(Category entity)
+    {
+        using var connection = await _connectionFactory.CreateConnectionAsync();
+        var nameCheckSql = $"SELECT COUNT(1) FROM {FullTableName} WHERE Name = @Name AND Id != @Id";
+        var nameExists = await connection.QuerySingleAsync<int>(nameCheckSql, new { entity.Name, entity.Id });
+        if (nameExists > 0)
+        {
+            throw new ArgumentException($"Category name '{entity.Name}' is already taken by another category.");
+        }
+
+        await base.UpdateAsync(entity);
+    }
+
+    public override async Task<Category> AddAsync(Category entity)
+    {
+        if (await IsNameExistsAsync(entity.Name))
+        {
+            throw new ArgumentException($"Category name '{entity.Name}' is already taken.");
+        }
+
+        return await base.AddAsync(entity);
+    }
+
+    public override async Task DeleteAsync(long id)
+    {
+        var productCount = await GetProductCountByCategoryAsync(id);
+        if (productCount > 0)
+        {
+            throw new InvalidOperationException($"Cannot delete category with ID '{id}' because it has {productCount} associated product(s). Remove all products from this category first.");
+        }
+
+        await base.DeleteAsync(id);
     }
 
     protected override string GenerateInsertQuery()

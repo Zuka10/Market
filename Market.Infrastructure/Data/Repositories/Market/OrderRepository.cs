@@ -15,7 +15,9 @@ public class OrderRepository(IDbConnectionFactory connectionFactory) :
     {
         using var connection = await _connectionFactory.CreateConnectionAsync();
         var sql = $"SELECT * FROM {FullTableName} WHERE OrderNumber = @OrderNumber";
-        return await connection.QueryFirstOrDefaultAsync<Order>(sql, new { OrderNumber = orderNumber });
+        var order = await connection.QueryFirstOrDefaultAsync<Order>(sql, new { OrderNumber = orderNumber });
+
+        return order ?? throw new KeyNotFoundException($"Order with order number '{orderNumber}' was not found.");
     }
 
     public async Task<Order?> GetOrderWithDetailsAsync(long id)
@@ -59,7 +61,8 @@ public class OrderRepository(IDbConnectionFactory connectionFactory) :
             new { Id = id },
             splitOn: "Id,Id,Id,Id");
 
-        return orderDict.Values.FirstOrDefault();
+        var result = orderDict.Values.FirstOrDefault();
+        return result ?? throw new KeyNotFoundException($"Order with ID '{id}' was not found.");
     }
 
     public async Task<IEnumerable<Order>> GetOrdersWithDetailsAsync()
@@ -140,6 +143,14 @@ public class OrderRepository(IDbConnectionFactory connectionFactory) :
 
     public async Task<decimal> GetTotalSalesByLocationAsync(long locationId, DateTime? startDate = null, DateTime? endDate = null)
     {
+        using var locationConnection = await _connectionFactory.CreateConnectionAsync();
+        var locationCheckSql = "SELECT COUNT(1) FROM market.Location WHERE Id = @LocationId";
+        var locationExists = await locationConnection.QuerySingleAsync<int>(locationCheckSql, new { LocationId = locationId });
+        if (locationExists == 0)
+        {
+            throw new KeyNotFoundException($"Location with ID '{locationId}' was not found.");
+        }
+
         using var connection = await _connectionFactory.CreateConnectionAsync();
         var whereClause = "WHERE LocationId = @LocationId AND Status = @CompletedStatus";
 
@@ -193,6 +204,155 @@ public class OrderRepository(IDbConnectionFactory connectionFactory) :
         var sql = $"SELECT COUNT(1) FROM {FullTableName} WHERE OrderNumber = @OrderNumber";
         var count = await connection.QuerySingleAsync<int>(sql, new { OrderNumber = orderNumber });
         return count > 0;
+    }
+
+    public override async Task UpdateAsync(Order entity)
+    {
+        using var connection = await _connectionFactory.CreateConnectionAsync();
+        var orderNumberCheckSql = $"SELECT COUNT(1) FROM {FullTableName} WHERE OrderNumber = @OrderNumber AND Id != @Id";
+        var orderNumberExists = await connection.QuerySingleAsync<int>(orderNumberCheckSql, new { OrderNumber = entity.OrderNumber, Id = entity.Id });
+        if (orderNumberExists > 0)
+        {
+            throw new ArgumentException($"Order number '{entity.OrderNumber}' is already taken by another order.");
+        }
+
+        await ValidateForeignKeys(entity);
+
+        ValidateOrderAmounts(entity);
+
+        await ValidateOrderStatusTransition(entity);
+
+        await base.UpdateAsync(entity);
+    }
+
+    public override async Task<Order> AddAsync(Order entity)
+    {
+        if (await IsOrderNumberExistsAsync(entity.OrderNumber))
+        {
+            throw new ArgumentException($"Order number '{entity.OrderNumber}' is already taken.");
+        }
+
+        await ValidateForeignKeys(entity);
+
+        ValidateOrderAmounts(entity);
+
+        if (entity.OrderDate > DateTime.UtcNow.AddDays(1))
+        {
+            throw new ArgumentException("Order date cannot be more than 1 day in the future.");
+        }
+
+        return await base.AddAsync(entity);
+    }
+
+    public override async Task DeleteAsync(long id)
+    {
+        using var connection = await _connectionFactory.CreateConnectionAsync();
+        var statusCheckSql = $"SELECT Status FROM {FullTableName} WHERE Id = @Id";
+        var status = await connection.QuerySingleAsync<int>(statusCheckSql, new { Id = id });
+
+        if (status != (int)OrderStatus.Pending && status != (int)OrderStatus.Cancelled)
+        {
+            throw new InvalidOperationException($"Cannot delete order with ID '{id}' because it has status '{(OrderStatus)status}'. Only Pending or Cancelled orders can be deleted.");
+        }
+
+        var paymentCheckSql = "SELECT COUNT(1) FROM market.Payment WHERE OrderId = @OrderId";
+        var hasPayments = await connection.QuerySingleAsync<int>(paymentCheckSql, new { OrderId = id });
+        if (hasPayments > 0)
+        {
+            throw new InvalidOperationException($"Cannot delete order with ID '{id}' because it has associated payments. Cancel the order instead.");
+        }
+
+        await base.DeleteAsync(id);
+    }
+
+    private async Task ValidateForeignKeys(Order entity)
+    {
+        using var connection = await _connectionFactory.CreateConnectionAsync();
+
+        // Validate LocationId
+        var locationCheckSql = "SELECT COUNT(1) FROM market.Location WHERE Id = @LocationId AND IsActive = 1";
+        var locationExists = await connection.QuerySingleAsync<int>(locationCheckSql, new { entity.LocationId });
+        if (locationExists == 0)
+        {
+            throw new ArgumentException($"Location with ID '{entity.LocationId}' does not exist or is not active.");
+        }
+
+        // Validate UserId
+        var userCheckSql = "SELECT COUNT(1) FROM auth.[User] WHERE Id = @UserId AND IsActive = 1";
+        var userExists = await connection.QuerySingleAsync<int>(userCheckSql, new { entity.UserId });
+        if (userExists == 0)
+        {
+            throw new ArgumentException($"User with ID '{entity.UserId}' does not exist or is not active.");
+        }
+
+        // Validate DiscountId if provided
+        if (entity.DiscountId.HasValue)
+        {
+            var discountCheckSql = @"
+                SELECT COUNT(1) FROM market.Discount 
+                WHERE Id = @DiscountId 
+                  AND IsActive = 1 
+                  AND (StartDate IS NULL OR StartDate <= GETUTCDATE()) 
+                  AND (EndDate IS NULL OR EndDate >= GETUTCDATE())";
+            var discountExists = await connection.QuerySingleAsync<int>(discountCheckSql, new { entity.DiscountId });
+            if (discountExists == 0)
+            {
+                throw new ArgumentException($"Discount with ID '{entity.DiscountId}' does not exist or is not currently valid.");
+            }
+        }
+    }
+
+    private static void ValidateOrderAmounts(Order entity)
+    {
+        if (entity.Total < 0)
+        {
+            throw new ArgumentException("Order total cannot be negative.");
+        }
+
+        if (entity.SubTotal < 0)
+        {
+            throw new ArgumentException("Order subtotal cannot be negative.");
+        }
+
+        if (entity.TotalCommission < 0)
+        {
+            throw new ArgumentException("Order commission cannot be negative.");
+        }
+
+        if (entity.DiscountAmount < 0)
+        {
+            throw new ArgumentException("Discount amount cannot be negative.");
+        }
+
+        if (entity.DiscountAmount > entity.SubTotal)
+        {
+            throw new ArgumentException("Discount amount cannot exceed subtotal.");
+        }
+    }
+
+    private async Task ValidateOrderStatusTransition(Order entity)
+    {
+        using var connection = await _connectionFactory.CreateConnectionAsync();
+        var currentStatusSql = $"SELECT Status FROM {FullTableName} WHERE Id = @Id";
+        var currentStatus = await connection.QuerySingleAsync<int>(currentStatusSql, new { Id = entity.Id });
+
+        var currentOrderStatus = (OrderStatus)currentStatus;
+        var newOrderStatus = entity.Status;
+
+        // Define valid status transitions
+        var validTransitions = new Dictionary<OrderStatus, List<OrderStatus>>
+        {
+            [OrderStatus.Pending] = [OrderStatus.Completed, OrderStatus.Cancelled],
+            [OrderStatus.Completed] = [OrderStatus.Pending, OrderStatus.Cancelled],
+            [OrderStatus.Pending] = [OrderStatus.Completed, OrderStatus.Cancelled],
+            [OrderStatus.Completed] = [], // No transitions from completed
+            [OrderStatus.Cancelled] = [] // No transitions from cancelled
+        };
+
+        if (!validTransitions[currentOrderStatus].Contains(newOrderStatus))
+        {
+            throw new InvalidOperationException($"Invalid status transition from '{currentOrderStatus}' to '{newOrderStatus}'.");
+        }
     }
 
     protected override string GenerateInsertQuery()

@@ -18,7 +18,9 @@ public abstract class GenericRepository<T>(IDbConnectionFactory connectionFactor
     {
         using var connection = await _connectionFactory.CreateConnectionAsync();
         var sql = $"SELECT * FROM {FullTableName} WHERE Id = @Id";
-        return await connection.QueryFirstOrDefaultAsync<T>(sql, new { Id = id });
+        var entity = await connection.QueryFirstOrDefaultAsync<T>(sql, new { Id = id });
+
+        return entity ?? throw new KeyNotFoundException($"Entity not found in {FullTableName}");
     }
 
     public virtual async Task<IEnumerable<T>> GetAllAsync()
@@ -44,7 +46,6 @@ public abstract class GenericRepository<T>(IDbConnectionFactory connectionFactor
         var insertQuery = GenerateInsertQuery();
         var id = await connection.QuerySingleAsync<long>(insertQuery, entity);
 
-        // Set the ID property using reflection
         var idProperty = typeof(T).GetProperty("Id");
         idProperty?.SetValue(entity, id);
 
@@ -53,16 +54,39 @@ public abstract class GenericRepository<T>(IDbConnectionFactory connectionFactor
 
     public virtual async Task UpdateAsync(T entity)
     {
+        var idProperty = typeof(T).GetProperty("Id");
+        var id = (idProperty?.GetValue(entity)) ?? throw new ArgumentException($"Entity {typeof(T).Name} must have an Id property.");
+
+        if (!await ExistsAsync((long)id))
+        {
+            throw new KeyNotFoundException($"{typeof(T).Name} with ID '{id}' was not found and cannot be updated.");
+        }
+
         using var connection = await _connectionFactory.CreateConnectionAsync();
         var updateQuery = GenerateUpdateQuery();
-        await connection.ExecuteAsync(updateQuery, entity);
+        var rowsAffected = await connection.ExecuteAsync(updateQuery, entity);
+
+        if (rowsAffected == 0)
+        {
+            throw new KeyNotFoundException($"{typeof(T).Name} with ID '{id}' was not found and cannot be updated.");
+        }
     }
 
     public virtual async Task DeleteAsync(long id)
     {
+        if (!await ExistsAsync(id))
+        {
+            throw new KeyNotFoundException($"{typeof(T).Name} with ID '{id}' was not found and cannot be deleted.");
+        }
+
         using var connection = await _connectionFactory.CreateConnectionAsync();
         var sql = $"DELETE FROM {FullTableName} WHERE Id = @Id";
-        await connection.ExecuteAsync(sql, new { Id = id });
+        var rowsAffected = await connection.ExecuteAsync(sql, new { Id = id });
+
+        if (rowsAffected == 0)
+        {
+            throw new KeyNotFoundException($"{typeof(T).Name} with ID '{id}' was not found and cannot be deleted.");
+        }
     }
 
     public virtual async Task<int> CountAsync()

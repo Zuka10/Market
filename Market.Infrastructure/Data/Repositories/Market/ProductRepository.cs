@@ -18,6 +18,14 @@ public class ProductRepository(IDbConnectionFactory connectionFactory) :
 
     public async Task<IEnumerable<Product>> GetProductsByCategoryAsync(long categoryId)
     {
+        using var categoryConnection = await _connectionFactory.CreateConnectionAsync();
+        var categoryCheckSql = "SELECT COUNT(1) FROM market.Category WHERE Id = @CategoryId";
+        var categoryExists = await categoryConnection.QuerySingleAsync<int>(categoryCheckSql, new { CategoryId = categoryId });
+        if (categoryExists == 0)
+        {
+            throw new KeyNotFoundException($"Category with ID '{categoryId}' was not found.");
+        }
+
         using var connection = await _connectionFactory.CreateConnectionAsync();
         var sql = $"SELECT * FROM {FullTableName} WHERE CategoryId = @CategoryId AND IsAvailable = 1";
         return await connection.QueryAsync<Product>(sql, new { CategoryId = categoryId });
@@ -25,6 +33,14 @@ public class ProductRepository(IDbConnectionFactory connectionFactory) :
 
     public async Task<IEnumerable<Product>> GetProductsByLocationAsync(long locationId)
     {
+        using var locationConnection = await _connectionFactory.CreateConnectionAsync();
+        var locationCheckSql = "SELECT COUNT(1) FROM market.Location WHERE Id = @LocationId";
+        var locationExists = await locationConnection.QuerySingleAsync<int>(locationCheckSql, new { LocationId = locationId });
+        if (locationExists == 0)
+        {
+            throw new KeyNotFoundException($"Location with ID '{locationId}' was not found.");
+        }
+
         using var connection = await _connectionFactory.CreateConnectionAsync();
         var sql = $"SELECT * FROM {FullTableName} WHERE LocationId = @LocationId AND IsAvailable = 1";
         return await connection.QueryAsync<Product>(sql, new { LocationId = locationId });
@@ -52,7 +68,8 @@ public class ProductRepository(IDbConnectionFactory connectionFactory) :
             new { Id = id },
             splitOn: "Id,Id");
 
-        return result.FirstOrDefault();
+        var product = result.FirstOrDefault();
+        return product ?? throw new KeyNotFoundException($"Product with ID '{id}' was not found.");
     }
 
     public async Task<IEnumerable<Product>> GetProductsWithDetailsAsync()
@@ -126,12 +143,166 @@ public class ProductRepository(IDbConnectionFactory connectionFactory) :
 
     public async Task UpdateStockAsync(long productId, int newStock)
     {
+        if (!await ExistsAsync(productId))
+        {
+            throw new KeyNotFoundException($"Product with ID '{productId}' was not found and cannot update stock.");
+        }
+
+        if (newStock < 0)
+        {
+            throw new ArgumentException("Stock quantity cannot be negative.");
+        }
+
         using var connection = await _connectionFactory.CreateConnectionAsync();
         var sql = $@"
                 UPDATE {FullTableName} 
                 SET InStock = @NewStock, UpdatedAt = GETUTCDATE() 
                 WHERE Id = @ProductId";
-        await connection.ExecuteAsync(sql, new { ProductId = productId, NewStock = newStock });
+
+        var rowsAffected = await connection.ExecuteAsync(sql, new { ProductId = productId, NewStock = newStock });
+
+        if (rowsAffected == 0)
+        {
+            throw new KeyNotFoundException($"Product with ID '{productId}' was not found and cannot update stock.");
+        }
+    }
+
+    public override async Task UpdateAsync(Product entity)
+    {
+        await ValidateForeignKeys(entity);
+
+        ValidateProductRules(entity);
+
+        await ValidateProductUniqueness(entity);
+
+        await base.UpdateAsync(entity);
+    }
+
+    public override async Task<Product> AddAsync(Product entity)
+    {
+        await ValidateForeignKeys(entity);
+
+        ValidateProductRules(entity);
+
+        await ValidateProductUniqueness(entity);
+
+        return await base.AddAsync(entity);
+    }
+
+    public override async Task DeleteAsync(long id)
+    {
+        using var connection = await _connectionFactory.CreateConnectionAsync();
+        var orderDetailsCheckSql = "SELECT COUNT(1) FROM market.OrderDetail WHERE ProductId = @ProductId";
+        var hasOrderDetails = await connection.QuerySingleAsync<int>(orderDetailsCheckSql, new { ProductId = id });
+        if (hasOrderDetails > 0)
+        {
+            throw new InvalidOperationException($"Cannot delete product with ID '{id}' because it is referenced in {hasOrderDetails} order detail(s). Deactivate the product instead.");
+        }
+
+        var procurementDetailsCheckSql = "SELECT COUNT(1) FROM market.ProcurementDetail WHERE ProductId = @ProductId";
+        var hasProcurementDetails = await connection.QuerySingleAsync<int>(procurementDetailsCheckSql, new { ProductId = id });
+        if (hasProcurementDetails > 0)
+        {
+            throw new InvalidOperationException($"Cannot delete product with ID '{id}' because it is referenced in {hasProcurementDetails} procurement detail(s). Deactivate the product instead.");
+        }
+
+        await base.DeleteAsync(id);
+    }
+
+    private async Task ValidateForeignKeys(Product entity)
+    {
+        using var connection = await _connectionFactory.CreateConnectionAsync();
+
+        var categoryCheckSql = "SELECT COUNT(1) FROM market.Category WHERE Id = @CategoryId";
+        var categoryExists = await connection.QuerySingleAsync<int>(categoryCheckSql, new { CategoryId = entity.CategoryId });
+        if (categoryExists == 0)
+        {
+            throw new ArgumentException($"Category with ID '{entity.CategoryId}' does not exist.");
+        }
+
+        var locationCheckSql = "SELECT COUNT(1) FROM market.Location WHERE Id = @LocationId AND IsActive = 1";
+        var locationExists = await connection.QuerySingleAsync<int>(locationCheckSql, new { LocationId = entity.LocationId });
+        if (locationExists == 0)
+        {
+            throw new ArgumentException($"Location with ID '{entity.LocationId}' does not exist or is not active.");
+        }
+    }
+
+    private static void ValidateProductRules(Product entity)
+    {
+        if (string.IsNullOrWhiteSpace(entity.Name))
+        {
+            throw new ArgumentException("Product name is required.");
+        }
+
+        if (entity.Name.Length > 200)
+        {
+            throw new ArgumentException("Product name cannot exceed 200 characters.");
+        }
+
+        if (entity.Description?.Length > 1000)
+        {
+            throw new ArgumentException("Product description cannot exceed 1000 characters.");
+        }
+
+        if (entity.Price < 0)
+        {
+            throw new ArgumentException("Product price cannot be negative.");
+        }
+
+        if (entity.Price > 1000000)
+        {
+            throw new ArgumentException("Product price cannot exceed $1,000,000.");
+        }
+
+        if (entity.InStock < 0)
+        {
+            throw new ArgumentException("Product stock cannot be negative.");
+        }
+
+        if (entity.InStock > 1000000)
+        {
+            throw new ArgumentException("Product stock cannot exceed 1,000,000 units.");
+        }
+
+        if (string.IsNullOrWhiteSpace(entity.Unit))
+        {
+            throw new ArgumentException("Product unit is required.");
+        }
+
+        if (entity.Unit.Length > 20)
+        {
+            throw new ArgumentException("Product unit cannot exceed 20 characters.");
+        }
+
+        // Validate unit format (should be standard units)
+        var validUnits = new[] { "piece", "kg", "gram", "liter", "ml", "meter", "cm", "pack", "box", "dozen", "pair" };
+        if (!validUnits.Contains(entity.Unit.ToLowerInvariant()))
+        {
+            throw new ArgumentException($"Product unit '{entity.Unit}' is not valid. Valid units are: {string.Join(", ", validUnits)}.");
+        }
+    }
+
+    private async Task ValidateProductUniqueness(Product entity)
+    {
+        using var connection = await _connectionFactory.CreateConnectionAsync();
+
+        var duplicateCheckSql = entity.Id > 0
+            ? $"SELECT COUNT(1) FROM {FullTableName} WHERE Name = @Name AND LocationId = @LocationId AND CategoryId = @CategoryId AND Id != @Id"
+            : $"SELECT COUNT(1) FROM {FullTableName} WHERE Name = @Name AND LocationId = @LocationId AND CategoryId = @CategoryId";
+
+        var duplicateExists = await connection.QuerySingleAsync<int>(duplicateCheckSql, new
+        {
+            entity.Name,
+            entity.LocationId,
+            entity.CategoryId,
+            entity.Id
+        });
+
+        if (duplicateExists > 0)
+        {
+            throw new ArgumentException($"A product with name '{entity.Name}' already exists in the same location and category.");
+        }
     }
 
     protected override string GenerateInsertQuery()

@@ -58,7 +58,8 @@ public class LocationRepository(IDbConnectionFactory connectionFactory) :
             new { Id = id },
             splitOn: "Id,Id");
 
-        return locationDict.Values.FirstOrDefault();
+        var result = locationDict.Values.FirstOrDefault();
+        return result ?? throw new KeyNotFoundException($"Location with ID '{id}' was not found.");
     }
 
     public async Task<IEnumerable<Location>> GetLocationsWithVendorsAsync()
@@ -108,9 +109,61 @@ public class LocationRepository(IDbConnectionFactory connectionFactory) :
 
     public async Task<int> GetVendorCountByLocationAsync(long locationId)
     {
+        if (!await ExistsAsync(locationId))
+        {
+            throw new KeyNotFoundException($"Location with ID '{locationId}' was not found.");
+        }
+
         using var connection = await _connectionFactory.CreateConnectionAsync();
         var sql = "SELECT COUNT(*) FROM market.VendorLocation WHERE LocationId = @LocationId AND IsActive = 1";
         return await connection.QuerySingleAsync<int>(sql, new { LocationId = locationId });
+    }
+
+    public override async Task UpdateAsync(Location entity)
+    {
+        using var connection = await _connectionFactory.CreateConnectionAsync();
+        var duplicateCheckSql = $@"
+            SELECT COUNT(1) FROM {FullTableName} 
+            WHERE Name = @Name AND Address = @Address AND City = @City AND Id != @Id";
+
+        var duplicateExists = await connection.QuerySingleAsync<int>(duplicateCheckSql,
+            new { entity.Name, entity.Address, entity.City, entity.Id });
+
+        if (duplicateExists > 0)
+        {
+            throw new ArgumentException($"A location with name '{entity.Name}' at address '{entity.Address}' in '{entity.City}' already exists.");
+        }
+
+        await base.UpdateAsync(entity);
+    }
+
+    public override async Task<Location> AddAsync(Location entity)
+    {
+        using var connection = await _connectionFactory.CreateConnectionAsync();
+        var duplicateCheckSql = $@"
+            SELECT COUNT(1) FROM {FullTableName} 
+            WHERE Name = @Name AND Address = @Address AND City = @City";
+
+        var duplicateExists = await connection.QuerySingleAsync<int>(duplicateCheckSql,
+            new { entity.Name, entity.Address, entity.City });
+
+        if (duplicateExists > 0)
+        {
+            throw new ArgumentException($"A location with name '{entity.Name}' at address '{entity.Address}' in '{entity.City}' already exists.");
+        }
+
+        return await base.AddAsync(entity);
+    }
+
+    public override async Task DeleteAsync(long id)
+    {
+        var vendorCount = await GetVendorCountByLocationAsync(id);
+        if (vendorCount > 0)
+        {
+            throw new InvalidOperationException($"Cannot delete location with ID '{id}' because it has {vendorCount} active vendor(s). Remove all vendors from this location first.");
+        }
+
+        await base.DeleteAsync(id);
     }
 
     protected override string GenerateInsertQuery()

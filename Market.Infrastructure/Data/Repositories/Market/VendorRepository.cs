@@ -20,7 +20,9 @@ public class VendorRepository(IDbConnectionFactory connectionFactory) :
     {
         using var connection = await _connectionFactory.CreateConnectionAsync();
         var sql = $"SELECT * FROM {FullTableName} WHERE Email = @Email";
-        return await connection.QueryFirstOrDefaultAsync<Vendor>(sql, new { Email = email });
+        var vendor = await connection.QueryFirstOrDefaultAsync<Vendor>(sql, new { Email = email });
+
+        return vendor ?? throw new KeyNotFoundException($"Vendor with email '{email}' was not found.");
     }
 
     public async Task<Vendor?> GetVendorWithLocationsAsync(long id)
@@ -58,7 +60,8 @@ public class VendorRepository(IDbConnectionFactory connectionFactory) :
             new { Id = id },
             splitOn: "Id,Id");
 
-        return vendorDict.Values.FirstOrDefault();
+        var result = vendorDict.Values.FirstOrDefault();
+        return result ?? throw new KeyNotFoundException($"Vendor with ID '{id}' was not found.");
     }
 
     public async Task<IEnumerable<Vendor>> GetVendorsWithLocationsAsync()
@@ -108,6 +111,14 @@ public class VendorRepository(IDbConnectionFactory connectionFactory) :
 
     public async Task<IEnumerable<Vendor>> GetVendorsByLocationAsync(long locationId)
     {
+        using var locationConnection = await _connectionFactory.CreateConnectionAsync();
+        var locationCheckSql = "SELECT COUNT(1) FROM market.Location WHERE Id = @LocationId";
+        var locationExists = await locationConnection.QuerySingleAsync<int>(locationCheckSql, new { LocationId = locationId });
+        if (locationExists == 0)
+        {
+            throw new KeyNotFoundException($"Location with ID '{locationId}' was not found.");
+        }
+
         using var connection = await _connectionFactory.CreateConnectionAsync();
         var sql = @"
                 SELECT v.* FROM market.Vendor v
@@ -122,6 +133,167 @@ public class VendorRepository(IDbConnectionFactory connectionFactory) :
         var sql = $"SELECT COUNT(1) FROM {FullTableName} WHERE Email = @Email";
         var count = await connection.QuerySingleAsync<int>(sql, new { Email = email });
         return count > 0;
+    }
+
+    public override async Task UpdateAsync(Vendor entity)
+    {
+        ValidateVendorRules(entity);
+
+        await ValidateEmailUniqueness(entity);
+
+        await base.UpdateAsync(entity);
+    }
+
+    public override async Task<Vendor> AddAsync(Vendor entity)
+    {
+        ValidateVendorRules(entity);
+
+        if (await IsEmailExistsAsync(entity.Email))
+        {
+            throw new ArgumentException($"Vendor email '{entity.Email}' is already taken.");
+        }
+
+        return await base.AddAsync(entity);
+    }
+
+    public override async Task DeleteAsync(long id)
+    {
+        using var connection = await _connectionFactory.CreateConnectionAsync();
+        var activeLocationsCheckSql = @"
+            SELECT COUNT(1) FROM market.VendorLocation 
+            WHERE VendorId = @VendorId 
+              AND IsActive = 1 
+              AND StartDate <= GETUTCDATE() 
+              AND (EndDate IS NULL OR EndDate > GETUTCDATE())";
+        var hasActiveLocations = await connection.QuerySingleAsync<int>(activeLocationsCheckSql, new { VendorId = id });
+
+        if (hasActiveLocations > 0)
+        {
+            throw new InvalidOperationException($"Cannot delete vendor with ID '{id}' because it has {hasActiveLocations} active location(s). Deactivate all locations first.");
+        }
+
+        var procurementsCheckSql = "SELECT COUNT(1) FROM market.Procurement WHERE VendorId = @VendorId";
+        var hasProcurements = await connection.QuerySingleAsync<int>(procurementsCheckSql, new { VendorId = id });
+
+        if (hasProcurements > 0)
+        {
+            throw new InvalidOperationException($"Cannot delete vendor with ID '{id}' because it has {hasProcurements} associated procurement(s). Deactivate the vendor instead.");
+        }
+
+        var discountsCheckSql = "SELECT COUNT(1) FROM market.Discount WHERE VendorId = @VendorId";
+        var hasDiscounts = await connection.QuerySingleAsync<int>(discountsCheckSql, new { VendorId = id });
+
+        if (hasDiscounts > 0)
+        {
+            throw new InvalidOperationException($"Cannot delete vendor with ID '{id}' because it has {hasDiscounts} associated discount(s). Deactivate the vendor instead.");
+        }
+
+        await base.DeleteAsync(id);
+    }
+
+    private static void ValidateVendorRules(Vendor entity)
+    {
+        if (string.IsNullOrWhiteSpace(entity.Name))
+        {
+            throw new ArgumentException("Vendor name is required.");
+        }
+
+        if (entity.Name.Length > 200)
+        {
+            throw new ArgumentException("Vendor name cannot exceed 200 characters.");
+        }
+
+        if (string.IsNullOrWhiteSpace(entity.ContactPersonName))
+        {
+            throw new ArgumentException("Contact person name is required.");
+        }
+
+        if (entity.ContactPersonName.Length > 100)
+        {
+            throw new ArgumentException("Contact person name cannot exceed 100 characters.");
+        }
+
+        if (string.IsNullOrWhiteSpace(entity.Email))
+        {
+            throw new ArgumentException("Vendor email is required.");
+        }
+
+        if (entity.Email.Length > 100)
+        {
+            throw new ArgumentException("Vendor email cannot exceed 100 characters.");
+        }
+
+        if (!IsValidEmail(entity.Email))
+        {
+            throw new ArgumentException("Vendor email format is invalid.");
+        }
+
+        if (string.IsNullOrWhiteSpace(entity.PhoneNumber))
+        {
+            throw new ArgumentException("Phone number is required.");
+        }
+
+        if (entity.PhoneNumber.Length > 20)
+        {
+            throw new ArgumentException("Phone number cannot exceed 20 characters.");
+        }
+
+        // Validate phone number format (basic validation)
+        if (!System.Text.RegularExpressions.Regex.IsMatch(entity.PhoneNumber, @"^[\+]?[0-9\s\-\(\)]+$"))
+        {
+            throw new ArgumentException("Phone number format is invalid. Use only numbers, spaces, hyphens, parentheses, and + sign.");
+        }
+
+        if (entity.Address?.Length > 500)
+        {
+            throw new ArgumentException("Address cannot exceed 500 characters.");
+        }
+
+        if (entity.Description?.Length > 1000)
+        {
+            throw new ArgumentException("Description cannot exceed 1000 characters.");
+        }
+
+        if (entity.CommissionRate < 0)
+        {
+            throw new ArgumentException("Commission rate cannot be negative.");
+        }
+
+        if (entity.CommissionRate > 100)
+        {
+            throw new ArgumentException("Commission rate cannot exceed 100%.");
+        }
+
+        // Business rule: Commission rate should be reasonable
+        if (entity.CommissionRate > 50)
+        {
+            throw new ArgumentException("Commission rate cannot exceed 50% for business policy reasons.");
+        }
+    }
+
+    private async Task ValidateEmailUniqueness(Vendor entity)
+    {
+        using var connection = await _connectionFactory.CreateConnectionAsync();
+        var emailCheckSql = $"SELECT COUNT(1) FROM {FullTableName} WHERE Email = @Email AND Id != @Id";
+        var emailExists = await connection.QuerySingleAsync<int>(emailCheckSql, new { Email = entity.Email, Id = entity.Id });
+
+        if (emailExists > 0)
+        {
+            throw new ArgumentException($"Vendor email '{entity.Email}' is already taken by another vendor.");
+        }
+    }
+
+    private static bool IsValidEmail(string email)
+    {
+        try
+        {
+            var addr = new System.Net.Mail.MailAddress(email);
+            return addr.Address == email;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     protected override string GenerateInsertQuery()

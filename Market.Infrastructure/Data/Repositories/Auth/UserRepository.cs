@@ -13,14 +13,18 @@ public class UserRepository(IDbConnectionFactory connectionFactory) :
     {
         using var connection = await _connectionFactory.CreateConnectionAsync();
         var sql = $"SELECT * FROM {FullTableName} WHERE Username = @Username";
-        return await connection.QueryFirstOrDefaultAsync<User>(sql, new { Username = username });
+        var user = await connection.QueryFirstOrDefaultAsync<User>(sql, new { Username = username });
+
+        return user ?? throw new KeyNotFoundException($"User with username '{username}' not found in {FullTableName}.");
     }
 
     public async Task<User?> GetByEmailAsync(string email)
     {
         using var connection = await _connectionFactory.CreateConnectionAsync();
         var sql = $"SELECT * FROM {FullTableName} WHERE Email = @Email";
-        return await connection.QueryFirstOrDefaultAsync<User>(sql, new { Email = email });
+        var user = await connection.QueryFirstOrDefaultAsync<User>(sql, new { Email = email });
+
+        return user ?? throw new KeyNotFoundException($"User with email '{email}' was not found.");
     }
 
     public async Task<User?> GetUserWithRoleAsync(long id)
@@ -42,7 +46,7 @@ public class UserRepository(IDbConnectionFactory connectionFactory) :
             new { Id = id },
             splitOn: "Id");
 
-        return result.FirstOrDefault();
+        return result.FirstOrDefault() ?? throw new KeyNotFoundException($"User with ID '{id}' was not found.");
     }
 
     public async Task<IEnumerable<User>> GetUsersByRoleAsync(long roleId)
@@ -107,6 +111,46 @@ public class UserRepository(IDbConnectionFactory connectionFactory) :
             new { IsActive = isActive, Offset = offset, PageSize = pageSize });
 
         return (users, totalCount);
+    }
+
+    public override async Task UpdateAsync(User entity)
+    {
+        if (!await ExistsAsync(entity.Id))
+        {
+            throw new KeyNotFoundException($"User with ID '{entity.Id}' was not found and cannot be updated.");
+        }
+
+        using var connection = await _connectionFactory.CreateConnectionAsync();
+        var usernameCheckSql = $"SELECT COUNT(1) FROM {FullTableName} WHERE Username = @Username AND Id != @Id";
+        var usernameExists = await connection.QuerySingleAsync<int>(usernameCheckSql, new { Username = entity.Username, Id = entity.Id });
+        if (usernameExists > 0)
+        {
+            throw new ArgumentException($"Username '{entity.Username}' is already taken by another user.");
+        }
+
+        var emailCheckSql = $"SELECT COUNT(1) FROM {FullTableName} WHERE Email = @Email AND Id != @Id";
+        var emailExists = await connection.QuerySingleAsync<int>(emailCheckSql, new { Email = entity.Email, Id = entity.Id });
+        if (emailExists > 0)
+        {
+            throw new ArgumentException($"Email '{entity.Email}' is already taken by another user.");
+        }
+
+        await base.UpdateAsync(entity);
+    }
+
+    public override async Task<User> AddAsync(User entity)
+    {
+        if (await IsUsernameExistsAsync(entity.Username))
+        {
+            throw new ArgumentException($"Username '{entity.Username}' is already taken.");
+        }
+
+        if (await IsEmailExistsAsync(entity.Email))
+        {
+            throw new ArgumentException($"Email '{entity.Email}' is already taken.");
+        }
+
+        return await base.AddAsync(entity);
     }
 
     protected override string GenerateInsertQuery()
