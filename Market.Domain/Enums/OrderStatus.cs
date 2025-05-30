@@ -1,10 +1,10 @@
 ﻿namespace Market.Domain.Enums;
 
-public enum PaymentStatus
+public enum OrderStatus
 {
     Pending = 1,
-    Completed = 2,
-    Failed = 3,
+    Processing = 2,
+    Completed = 3,
     Cancelled = 4,
     Refunded = 5
 }
