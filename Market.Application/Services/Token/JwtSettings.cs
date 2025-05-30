@@ -1,4 +1,4 @@
-﻿namespace Market.Application.Services;
+﻿namespace Market.Application.Services.Token;
 
 public class JwtSettings
 {

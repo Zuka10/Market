@@ -1,6 +1,6 @@
-﻿namespace Market.Application.Common.Models;
+﻿namespace Market.Domain.Filters;
 
-public class PagedResultDto<T>
+public class PagedResult<T>
 {
     public List<T> Items { get; set; } = [];
     public int TotalCount { get; set; }
@@ -10,11 +10,11 @@ public class PagedResultDto<T>
     public bool HasPreviousPage { get; set; }
     public bool HasNextPage { get; set; }
 
-    public PagedResultDto()
+    public PagedResult()
     {
     }
 
-    public PagedResultDto(List<T> items, int totalCount, int page, int pageSize)
+    public PagedResult(List<T> items, int totalCount, int page, int pageSize)
     {
         Items = items;
         TotalCount = totalCount;

@@ -1,7 +1,8 @@
-﻿using MediatR;
+﻿using Market.Application.Common.Models;
+using MediatR;
 
 namespace Market.Application.Common.Interfaces;
 
-public interface IQuery<out TResponse> : IRequest<TResponse>
+public interface IQuery<TResponse> : IRequest<BaseResponse<TResponse>>
 {
 }

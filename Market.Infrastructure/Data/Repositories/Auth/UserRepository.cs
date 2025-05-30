@@ -1,6 +1,7 @@
 ﻿using Dapper;
 using Market.Domain.Abstractions.Repositories.Auth;
 using Market.Domain.Entities.Auth;
+using Market.Domain.Filters;
 using Market.Infrastructure.Constants;
 
 namespace Market.Infrastructure.Data.Repositories.Auth;
@@ -92,25 +93,102 @@ public class UserRepository(IDbConnectionFactory connectionFactory) :
         return await connection.QueryAsync<User>(sql, new { SearchTerm = $"%{searchTerm}%" });
     }
 
-    public async Task<(IEnumerable<User> Users, int TotalCount)> GetPagedUsersAsync(int page, int pageSize, bool? isActive = null)
+    public async Task<PagedResult<User>> GetPagedUsersAsync(UserFilterParameters filterParams)
     {
         using var connection = await _connectionFactory.CreateConnectionAsync();
 
-        var whereClause = isActive.HasValue ? "WHERE IsActive = @IsActive" : "";
-        var countSql = $"SELECT COUNT(*) FROM {FullTableName} {whereClause}";
-        var totalCount = await connection.QuerySingleAsync<int>(countSql, new { IsActive = isActive });
+        var whereConditions = new List<string>();
+        var parameters = new DynamicParameters();
 
-        var offset = (page - 1) * pageSize;
-        var sql = $@"
-                SELECT * FROM {FullTableName} {whereClause}
-                ORDER BY CreatedAt DESC
-                OFFSET @Offset ROWS
-                FETCH NEXT @PageSize ROWS ONLY";
+        // Build WHERE clause based on filters
+        if (filterParams.IsActive.HasValue)
+        {
+            whereConditions.Add("u.IsActive = @IsActive");
+            parameters.Add("IsActive", filterParams.IsActive.Value);
+        }
 
-        var users = await connection.QueryAsync<User>(sql,
-            new { IsActive = isActive, Offset = offset, PageSize = pageSize });
+        if (!string.IsNullOrEmpty(filterParams.SearchTerm))
+        {
+            whereConditions.Add("(u.Username LIKE @SearchTerm OR u.FirstName LIKE @SearchTerm OR u.LastName LIKE @SearchTerm OR u.Email LIKE @SearchTerm)");
+            parameters.Add("SearchTerm", $"%{filterParams.SearchTerm}%");
+        }
 
-        return (users, totalCount);
+        if (filterParams.RoleId.HasValue)
+        {
+            whereConditions.Add("u.RoleId = @RoleId");
+            parameters.Add("RoleId", filterParams.RoleId.Value);
+        }
+
+        var whereClause = whereConditions.Any() ? "WHERE " + string.Join(" AND ", whereConditions) : "";
+
+        // Build ORDER BY clause
+        var validSortFields = new Dictionary<string, string>
+        {
+            { "id", "u.Id" },
+            { "username", "u.Username" },
+            { "email", "u.Email" },
+            { "firstname", "u.FirstName" },
+            { "lastname", "u.LastName" },
+            { "createdat", "u.CreatedAt" },
+            { "updatedat", "u.UpdatedAt" }
+        };
+
+        var sortField = validSortFields.ContainsKey(filterParams.SortBy?.ToLower() ?? "id")
+            ? validSortFields[filterParams.SortBy.ToLower()]
+            : validSortFields["id"];
+
+        var sortDirection = filterParams.SortDirection?.ToLower() == "desc" ? "DESC" : "ASC";
+        var orderByClause = $"ORDER BY {sortField} {sortDirection}";
+
+        // Calculate pagination
+        var offset = (filterParams.PageNumber - 1) * filterParams.PageSize;
+        parameters.Add("Offset", offset);
+        parameters.Add("PageSize", filterParams.PageSize);
+
+        // Count query
+        var countSql = $@"
+            SELECT COUNT(*)
+            FROM {FullTableName} u
+            LEFT JOIN auth.Role r ON u.RoleId = r.Id
+            {whereClause}";
+
+        // Data query with role information
+        var dataSql = $@"
+            SELECT u.*, r.Id as RoleId_Split, r.Name as RoleName
+            FROM {FullTableName} u
+            LEFT JOIN auth.Role r ON u.RoleId = r.Id
+            {whereClause}
+            {orderByClause}
+            OFFSET @Offset ROWS
+            FETCH NEXT @PageSize ROWS ONLY";
+
+        // Execute queries
+        var totalCount = await connection.QuerySingleAsync<int>(countSql, parameters);
+
+        var users = await connection.QueryAsync<User, Role, User>(
+            dataSql,
+            (user, role) =>
+            {
+                user.Role = role;
+                return user;
+            },
+            parameters,
+            splitOn: "RoleId_Split"
+        );
+
+        // Calculate pagination metadata
+        var totalPages = (int)Math.Ceiling((double)totalCount / filterParams.PageSize);
+
+        return new PagedResult<User>
+        {
+            Items = users.ToList(),
+            TotalCount = totalCount,
+            Page = filterParams.PageNumber,
+            PageSize = filterParams.PageSize,
+            TotalPages = totalPages,
+            HasNextPage = filterParams.PageNumber < totalPages,
+            HasPreviousPage = filterParams.PageNumber > 1
+        };
     }
 
     public override async Task UpdateAsync(User entity)

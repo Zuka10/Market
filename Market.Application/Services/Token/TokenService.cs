@@ -1,4 +1,5 @@
-﻿using Market.Application.DTOs.Auth;
+﻿using Market.Application.Common.Interfaces;
+using Market.Application.DTOs.Auth;
 using Market.Domain.Abstractions;
 using Market.Domain.Entities.Auth;
 using Microsoft.Extensions.Options;
@@ -8,7 +9,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace Market.Application.Services;
+namespace Market.Application.Services.Token;
 
 public class TokenService : ITokenService
 {
@@ -123,6 +124,107 @@ public class TokenService : ITokenService
         };
 
         return await _unitOfWork.RefreshTokens.AddAsync(refreshToken);
+    }
+    public string GeneratePasswordResetToken(long userId, string email, TimeSpan expiration)
+    {
+        var tokenHandler = new JwtSecurityTokenHandler();
+        var key = Encoding.ASCII.GetBytes(_jwtSettings.Secret);
+
+        var tokenDescriptor = new SecurityTokenDescriptor
+        {
+            Subject = new ClaimsIdentity(new[]
+            {
+            new Claim("userId", userId.ToString()),
+            new Claim("email", email),
+            new Claim("tokenType", "password-reset"),
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+        }),
+            Expires = DateTime.UtcNow.Add(expiration),
+            Issuer = _jwtSettings.Issuer,
+            Audience = _jwtSettings.Audience,
+            SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
+        };
+
+        var token = tokenHandler.CreateToken(tokenDescriptor);
+        return tokenHandler.WriteToken(token);
+    }
+
+    public TokenValidationResult ValidatePasswordResetToken(string token)
+    {
+        try
+        {
+            var tokenHandler = new JwtSecurityTokenHandler();
+            var key = Encoding.ASCII.GetBytes(_jwtSettings.Secret);
+
+            var validationParameters = new TokenValidationParameters
+            {
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKey = new SymmetricSecurityKey(key),
+                ValidateIssuer = true,
+                ValidIssuer = _jwtSettings.Issuer,
+                ValidateAudience = true,
+                ValidAudience = _jwtSettings.Audience,
+                ValidateLifetime = true,
+                ClockSkew = TimeSpan.Zero // No tolerance for expiration
+            };
+
+            var principal = tokenHandler.ValidateToken(token, validationParameters, out var validatedToken);
+
+            // Verify it's a password reset token
+            var tokenTypeClaim = principal.FindFirst("tokenType");
+            if (tokenTypeClaim?.Value != "password-reset")
+            {
+                return new TokenValidationResult
+                {
+                    IsValid = false,
+                    ErrorMessage = "Invalid token type."
+                };
+            }
+
+            // Extract claims
+            var userIdClaim = principal.FindFirst("userId");
+            var emailClaim = principal.FindFirst("email");
+
+            if (userIdClaim == null || emailClaim == null || !long.TryParse(userIdClaim.Value, out var userId))
+            {
+                return new TokenValidationResult
+                {
+                    IsValid = false,
+                    ErrorMessage = "Invalid token claims."
+                };
+            }
+
+            return new TokenValidationResult
+            {
+                IsValid = true,
+                UserId = userId,
+                Email = emailClaim.Value
+            };
+        }
+        catch (SecurityTokenExpiredException)
+        {
+            return new TokenValidationResult
+            {
+                IsValid = false,
+                ErrorMessage = "Token has expired."
+            };
+        }
+        catch (SecurityTokenException)
+        {
+            return new TokenValidationResult
+            {
+                IsValid = false,
+                ErrorMessage = "Invalid token."
+            };
+        }
+        catch (Exception)
+        {
+            return new TokenValidationResult
+            {
+                IsValid = false,
+                ErrorMessage = "Token validation failed."
+            };
+        }
     }
 
     private static string GenerateRandomToken()
