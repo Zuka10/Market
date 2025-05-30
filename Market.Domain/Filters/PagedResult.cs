@@ -9,19 +9,4 @@ public class PagedResult<T>
     public int TotalPages { get; set; }
     public bool HasPreviousPage { get; set; }
     public bool HasNextPage { get; set; }
-
-    public PagedResult()
-    {
-    }
-
-    public PagedResult(List<T> items, int totalCount, int page, int pageSize)
-    {
-        Items = items;
-        TotalCount = totalCount;
-        Page = page;
-        PageSize = pageSize;
-        TotalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
-        HasPreviousPage = page > 1;
-        HasNextPage = page < TotalPages;
-    }
 }
