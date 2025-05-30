@@ -1,6 +1,7 @@
 ﻿using Dapper;
 using Market.Domain.Abstractions.Repositories.Market;
 using Market.Domain.Entities.Market;
+using Market.Domain.Filters;
 using Market.Infrastructure.Constants;
 
 namespace Market.Infrastructure.Data.Repositories.Market;
@@ -117,6 +118,118 @@ public class LocationRepository(IDbConnectionFactory connectionFactory) :
         using var connection = await _connectionFactory.CreateConnectionAsync();
         var sql = "SELECT COUNT(*) FROM market.VendorLocation WHERE LocationId = @LocationId AND IsActive = 1";
         return await connection.QuerySingleAsync<int>(sql, new { LocationId = locationId });
+    }
+    public async Task<PagedResult<Location>> GetLocationsPagedAsync(LocationFilterParameters filterParams)
+    {
+        using var connection = await _connectionFactory.CreateConnectionAsync();
+
+        var whereConditions = new List<string>();
+        var parameters = new DynamicParameters();
+
+        // Build WHERE clause based on filters
+        if (filterParams.IsActive.HasValue)
+        {
+            whereConditions.Add("l.IsActive = @IsActive");
+            parameters.Add("IsActive", filterParams.IsActive.Value);
+        }
+
+        if (!string.IsNullOrEmpty(filterParams.SearchTerm))
+        {
+            whereConditions.Add("(l.Name LIKE @SearchTerm OR l.Address LIKE @SearchTerm OR l.City LIKE @SearchTerm OR l.State LIKE @SearchTerm OR l.Country LIKE @SearchTerm)");
+            parameters.Add("SearchTerm", $"%{filterParams.SearchTerm}%");
+        }
+
+        if (!string.IsNullOrEmpty(filterParams.City))
+        {
+            whereConditions.Add("l.City LIKE @City");
+            parameters.Add("City", $"%{filterParams.City}%");
+        }
+
+        if (!string.IsNullOrEmpty(filterParams.Country))
+        {
+            whereConditions.Add("l.Country LIKE @Country");
+            parameters.Add("Country", $"%{filterParams.Country}%");
+        }
+
+        var whereClause = whereConditions.Any() ? "WHERE " + string.Join(" AND ", whereConditions) : "";
+
+        // Build ORDER BY clause
+        var validSortFields = new Dictionary<string, string>
+        {
+            { "name", "l.Name" },
+            { "city", "l.City" },
+            { "country", "l.Country" },
+            { "createdat", "l.CreatedAt" },
+            { "updatedat", "l.UpdatedAt" }
+        };
+
+        var sortField = validSortFields.ContainsKey(filterParams.SortBy?.ToLower() ?? "name")
+            ? validSortFields[filterParams.SortBy.ToLower()]
+            : validSortFields["name"];
+
+        var sortDirection = filterParams.SortDirection?.ToLower() == "desc" ? "DESC" : "ASC";
+        var orderByClause = $"ORDER BY {sortField} {sortDirection}";
+
+        // Calculate pagination
+        var offset = (filterParams.PageNumber - 1) * filterParams.PageSize;
+        parameters.Add("Offset", offset);
+        parameters.Add("PageSize", filterParams.PageSize);
+
+        // Count query
+        var countSql = $@"
+        SELECT COUNT(*)
+        FROM {FullTableName} l
+        {whereClause}";
+
+        // Data query with vendor and product counts
+        var dataSql = $@"
+        SELECT l.*,
+               ISNULL(v.VendorCount, 0) as VendorCount,
+               ISNULL(p.ProductCount, 0) as ProductCount
+        FROM {FullTableName} l
+        LEFT JOIN (
+            SELECT LocationId, COUNT(*) as VendorCount 
+            FROM Vendors 
+            GROUP BY LocationId
+        ) v ON l.Id = v.LocationId
+        LEFT JOIN (
+            SELECT LocationId, COUNT(*) as ProductCount 
+            FROM Products 
+            GROUP BY LocationId
+        ) p ON l.Id = p.LocationId
+        {whereClause}
+        {orderByClause}
+        OFFSET @Offset ROWS
+        FETCH NEXT @PageSize ROWS ONLY";
+
+        // Execute queries
+        var totalCount = await connection.QuerySingleAsync<int>(countSql, parameters);
+
+        var locations = await connection.QueryAsync<Location, int, int, Location>(
+            dataSql,
+            (location, vendorCount, productCount) =>
+            {
+                // Set the counts (these would be mapped to DTO properties)
+                // You might want to store these in additional properties or handle in mapping
+                return location;
+            },
+            parameters,
+            splitOn: "VendorCount,ProductCount"
+        );
+
+        // Calculate pagination metadata
+        var totalPages = (int)Math.Ceiling((double)totalCount / filterParams.PageSize);
+
+        return new PagedResult<Location>
+        {
+            Items = locations.ToList(),
+            TotalCount = totalCount,
+            Page = filterParams.PageNumber,
+            PageSize = filterParams.PageSize,
+            TotalPages = totalPages,
+            HasNextPage = filterParams.PageNumber < totalPages,
+            HasPreviousPage = filterParams.PageNumber > 1
+        };
     }
 
     public override async Task UpdateAsync(Location entity)
