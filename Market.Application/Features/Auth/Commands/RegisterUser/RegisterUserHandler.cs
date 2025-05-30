@@ -15,21 +15,21 @@ public class RegisterUserHandler(IUnitOfWork unitOfWork, ITokenService tokenServ
     {
         // Check for existing username
         var existingUserByUsername = await _unitOfWork.Users.GetByUsernameAsync(request.Username);
-        if (existingUserByUsername != null)
+        if (existingUserByUsername is not null)
         {
             return BaseResponse<AuthResponse>.Failure([$"Username '{request.Username}' is already taken."]);
         }
 
         // Check for existing email
         var existingUserByEmail = await _unitOfWork.Users.GetByEmailAsync(request.Email);
-        if (existingUserByEmail != null)
+        if (existingUserByEmail is not null)
         {
             return BaseResponse<AuthResponse>.Failure([$"Email '{request.Email}' is already registered."]);
         }
 
         // Validate role exists
         var role = await _unitOfWork.Roles.GetByIdAsync(request.RoleId);
-        if (role == null)
+        if (role is null)
         {
             return BaseResponse<AuthResponse>.Failure(["Invalid role specified."]);
         }

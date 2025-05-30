@@ -14,7 +14,7 @@ public class RevokeTokensHandler(IUnitOfWork unitOfWork, ITokenService tokenServ
     {
         // Verify user exists and is active
         var user = await _unitOfWork.Users.GetByIdAsync(request.UserId);
-        if (user == null || !user.IsActive)
+        if (user is null || !user.IsActive)
         {
             return BaseResponse<bool>.Failure(["User not found or inactive."]);
         }

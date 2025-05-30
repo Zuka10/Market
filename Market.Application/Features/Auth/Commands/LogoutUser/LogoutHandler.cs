@@ -17,7 +17,7 @@ public class LogoutHandler(IUnitOfWork unitOfWork) : ICommandHandler<LogoutComma
 
         // Find and revoke the refresh token
         var refreshToken = await _unitOfWork.RefreshTokens.GetByTokenAsync(request.RefreshToken);
-        if (refreshToken == null)
+        if (refreshToken is null)
         {
             return BaseResponse<bool>.Failure(["Invalid refresh token."]);
         }

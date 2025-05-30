@@ -15,7 +15,7 @@ public class GetCurrentUserHandler(IUnitOfWork unitOfWork, IMapper mapper) : IQu
     {
         // Get user with role information
         var user = await _unitOfWork.Users.GetUserWithRoleAsync(request.UserId);
-        if (user == null || !user.IsActive)
+        if (user is null || !user.IsActive)
         {
             return BaseResponse<UserDto>.Failure(["User not found or inactive."]);
         }

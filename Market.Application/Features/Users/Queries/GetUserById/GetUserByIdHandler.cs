@@ -15,7 +15,7 @@ public record GetUserByIdHandler(IUnitOfWork unitOfWork, IMapper mapper) : IQuer
     {
         // Get user by ID
         var user = await _unitOfWork.Users.GetByIdAsync(request.UserId);
-        if (user == null || !user.IsActive)
+        if (user is null || !user.IsActive)
         {
             return BaseResponse<UserDto>.Failure(["User not found or inactive."]);
         }

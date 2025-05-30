@@ -20,7 +20,7 @@ public class RefreshTokenHandler(IUnitOfWork unitOfWork, ITokenService tokenServ
 
         // Validate refresh token
         var refreshToken = await _unitOfWork.RefreshTokens.GetByTokenAsync(request.RefreshToken);
-        if (refreshToken == null)
+        if (refreshToken is null)
         {
             return BaseResponse<AuthResponse>.Failure(["Invalid refresh token."]);
         }
@@ -37,7 +37,7 @@ public class RefreshTokenHandler(IUnitOfWork unitOfWork, ITokenService tokenServ
 
         // Get user with role
         var user = await _unitOfWork.Users.GetUserWithRoleAsync(refreshToken.UserId);
-        if (user == null || !user.IsActive)
+        if (user is null || !user.IsActive)
         {
             return BaseResponse<AuthResponse>.Failure(["User not found or inactive."]);
         }

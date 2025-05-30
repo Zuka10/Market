@@ -1,6 +1,5 @@
 ﻿using AutoMapper;
 using Market.Application.DTOs.Auth;
-using Market.Application.Features.Auth.Commands.RegisterUser;
 using Market.Domain.Entities.Auth;
 
 namespace Market.Application.MapperProfiles;

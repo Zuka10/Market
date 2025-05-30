@@ -16,7 +16,7 @@ public class LoginUserHandler(IUnitOfWork unitOfWork, ITokenService tokenService
         var user = await _unitOfWork.Users.GetByUsernameAsync(request.UsernameOrEmail) ??
                   await _unitOfWork.Users.GetByEmailAsync(request.UsernameOrEmail);
 
-        if (user == null)
+        if (user is null)
         {
             return BaseResponse<AuthResponse>.Failure(["Invalid credentials."]);
         }
@@ -34,7 +34,7 @@ public class LoginUserHandler(IUnitOfWork unitOfWork, ITokenService tokenService
 
         // Get user with role
         var userWithRole = await _unitOfWork.Users.GetUserWithRoleAsync(user.Id);
-        if (userWithRole == null)
+        if (userWithRole is null)
         {
             return BaseResponse<AuthResponse>.Failure(["User role not found."]);
         }

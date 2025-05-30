@@ -17,7 +17,7 @@ public class ForgotPasswordHandler(IUnitOfWork unitOfWork, ITokenService tokenSe
         var user = await _unitOfWork.Users.GetByEmailAsync(request.Email.Trim().ToLower());
 
         // Always return success for security (don't reveal if email exists)
-        if (user == null || !user.IsActive)
+        if (user is null || !user.IsActive)
         {
             return BaseResponse<bool>.Success(true, "If the email exists, a password reset link has been sent.");
         }
