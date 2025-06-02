@@ -12,6 +12,5 @@ public interface IUserRepository : IGenericRepository<User>
     Task<IEnumerable<User>> GetActiveUsersAsync();
     Task<bool> IsUsernameExistsAsync(string username);
     Task<bool> IsEmailExistsAsync(string email);
-    Task<IEnumerable<User>> SearchUsersAsync(string searchTerm);
-    Task<PagedResult<User>> GetPagedUsersAsync(UserFilterParameters filterParams);
+    Task<PagedResult<User>> GetUsersAsync(UserFilterParameters filterParams);
 }

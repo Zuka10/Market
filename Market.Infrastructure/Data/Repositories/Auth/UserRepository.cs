@@ -80,91 +80,22 @@ public class UserRepository(IDbConnectionFactory connectionFactory) :
         return count > 0;
     }
 
-    public async Task<IEnumerable<User>> SearchUsersAsync(string searchTerm)
-    {
-        using var connection = await _connectionFactory.CreateConnectionAsync();
-        var sql = $@"
-                SELECT * FROM {FullTableName} 
-                WHERE Username LIKE @SearchTerm 
-                   OR Email LIKE @SearchTerm 
-                   OR FirstName LIKE @SearchTerm 
-                   OR LastName LIKE @SearchTerm";
-
-        return await connection.QueryAsync<User>(sql, new { SearchTerm = $"%{searchTerm}%" });
-    }
-
-    public async Task<PagedResult<User>> GetPagedUsersAsync(UserFilterParameters filterParams)
+    public async Task<PagedResult<User>> GetUsersAsync(UserFilterParameters filterParams)
     {
         using var connection = await _connectionFactory.CreateConnectionAsync();
 
-        var whereConditions = new List<string>();
-        var parameters = new DynamicParameters();
+        var (whereClause, parameters) = BuildWhereClause(filterParams);
+        var orderByClause = BuildOrderByClause(filterParams.SortBy, filterParams.SortDirection);
+        var (offset, pageSize) = CalculatePagination(filterParams.PageNumber, filterParams.PageSize);
 
-        // Build WHERE clause based on filters
-        if (filterParams.IsActive.HasValue)
-        {
-            whereConditions.Add("u.IsActive = @IsActive");
-            parameters.Add("IsActive", filterParams.IsActive.Value);
-        }
-
-        if (!string.IsNullOrEmpty(filterParams.SearchTerm))
-        {
-            whereConditions.Add("(u.Username LIKE @SearchTerm OR u.FirstName LIKE @SearchTerm OR u.LastName LIKE @SearchTerm OR u.Email LIKE @SearchTerm)");
-            parameters.Add("SearchTerm", $"%{filterParams.SearchTerm}%");
-        }
-
-        if (filterParams.RoleId.HasValue)
-        {
-            whereConditions.Add("u.RoleId = @RoleId");
-            parameters.Add("RoleId", filterParams.RoleId.Value);
-        }
-
-        var whereClause = whereConditions.Any() ? "WHERE " + string.Join(" AND ", whereConditions) : "";
-
-        // Build ORDER BY clause
-        var validSortFields = new Dictionary<string, string>
-        {
-            { "id", "u.Id" },
-            { "username", "u.Username" },
-            { "email", "u.Email" },
-            { "firstname", "u.FirstName" },
-            { "lastname", "u.LastName" },
-            { "createdat", "u.CreatedAt" },
-            { "updatedat", "u.UpdatedAt" }
-        };
-
-        var sortField = validSortFields.ContainsKey(filterParams.SortBy?.ToLower() ?? "id")
-            ? validSortFields[filterParams.SortBy.ToLower()]
-            : validSortFields["id"];
-
-        var sortDirection = filterParams.SortDirection?.ToLower() == "desc" ? "DESC" : "ASC";
-        var orderByClause = $"ORDER BY {sortField} {sortDirection}";
-
-        // Calculate pagination
-        var offset = (filterParams.PageNumber - 1) * filterParams.PageSize;
         parameters.Add("Offset", offset);
-        parameters.Add("PageSize", filterParams.PageSize);
+        parameters.Add("PageSize", pageSize);
 
-        // Count query
-        var countSql = $@"
-            SELECT COUNT(*)
-            FROM {FullTableName} u
-            LEFT JOIN auth.Role r ON u.RoleId = r.Id
-            {whereClause}";
-
-        // Data query with role information
-        var dataSql = $@"
-            SELECT u.*, r.Id as RoleId_Split, r.Name as RoleName
-            FROM {FullTableName} u
-            LEFT JOIN auth.Role r ON u.RoleId = r.Id
-            {whereClause}
-            {orderByClause}
-            OFFSET @Offset ROWS
-            FETCH NEXT @PageSize ROWS ONLY";
+        var countSql = BuildCountQuery(whereClause);
+        var dataSql = BuildDataQuery(whereClause, orderByClause);
 
         // Execute queries
         var totalCount = await connection.QuerySingleAsync<int>(countSql, parameters);
-
         var users = await connection.QueryAsync<User, Role, User>(
             dataSql,
             (user, role) =>
@@ -176,8 +107,7 @@ public class UserRepository(IDbConnectionFactory connectionFactory) :
             splitOn: "RoleId_Split"
         );
 
-        // Calculate pagination metadata
-        var totalPages = (int)Math.Ceiling((double)totalCount / filterParams.PageSize);
+        var paginationMetadata = CalculatePaginationMetadata(totalCount, filterParams.PageNumber, filterParams.PageSize);
 
         return new PagedResult<User>
         {
@@ -185,9 +115,9 @@ public class UserRepository(IDbConnectionFactory connectionFactory) :
             TotalCount = totalCount,
             Page = filterParams.PageNumber,
             PageSize = filterParams.PageSize,
-            TotalPages = totalPages,
-            HasNextPage = filterParams.PageNumber < totalPages,
-            HasPreviousPage = filterParams.PageNumber > 1
+            TotalPages = paginationMetadata.TotalPages,
+            HasNextPage = paginationMetadata.HasNextPage,
+            HasPreviousPage = paginationMetadata.HasPreviousPage
         };
     }
 
@@ -229,6 +159,95 @@ public class UserRepository(IDbConnectionFactory connectionFactory) :
         }
 
         return await base.AddAsync(entity);
+    }
+
+
+    private static (string WhereClause, DynamicParameters Parameters) BuildWhereClause(UserFilterParameters filterParams)
+    {
+        var whereConditions = new List<string>();
+        var parameters = new DynamicParameters();
+
+        if (filterParams.IsActive.HasValue)
+        {
+            whereConditions.Add("u.IsActive = @IsActive");
+            parameters.Add("IsActive", filterParams.IsActive.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(filterParams.SearchTerm))
+        {
+            whereConditions.Add("(u.Username LIKE @SearchTerm OR u.FirstName LIKE @SearchTerm OR u.LastName LIKE @SearchTerm OR u.Email LIKE @SearchTerm)");
+            parameters.Add("SearchTerm", $"%{filterParams.SearchTerm.Trim()}%");
+        }
+
+        if (filterParams.RoleId.HasValue)
+        {
+            whereConditions.Add("u.RoleId = @RoleId");
+            parameters.Add("RoleId", filterParams.RoleId.Value);
+        }
+
+        var whereClause = whereConditions.Any() ? "WHERE " + string.Join(" AND ", whereConditions) : "";
+        return (whereClause, parameters);
+    }
+
+    private static string BuildOrderByClause(string? sortBy, string? sortDirection)
+    {
+        var validSortFields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        { "id", "u.Id" },
+        { "username", "u.Username" },
+        { "email", "u.Email" },
+        { "firstname", "u.FirstName" },
+        { "lastname", "u.LastName" },
+        { "createdat", "u.CreatedAt" },
+        { "updatedat", "u.UpdatedAt" }
+    };
+
+        var sortField = validSortFields.ContainsKey(sortBy ?? "id")
+            ? validSortFields[sortBy ?? "id"]
+            : validSortFields["id"];
+
+        var direction = string.Equals(sortDirection, "desc", StringComparison.OrdinalIgnoreCase) ? "DESC" : "ASC";
+
+        return $"ORDER BY {sortField} {direction}";
+    }
+
+    private static (int Offset, int PageSize) CalculatePagination(int pageNumber, int pageSize)
+    {
+        var offset = (pageNumber - 1) * pageSize;
+        return (offset, pageSize);
+    }
+
+    private string BuildCountQuery(string whereClause)
+    {
+        return $@"
+        SELECT COUNT(*)
+        FROM {FullTableName} u
+        LEFT JOIN auth.Role r ON u.RoleId = r.Id
+        {whereClause}";
+    }
+
+    private string BuildDataQuery(string whereClause, string orderByClause)
+    {
+        return $@"
+        SELECT u.*, r.Id as RoleId_Split, r.Name as RoleName
+        FROM {FullTableName} u
+        LEFT JOIN auth.Role r ON u.RoleId = r.Id
+        {whereClause}
+        {orderByClause}
+        OFFSET @Offset ROWS
+        FETCH NEXT @PageSize ROWS ONLY";
+    }
+
+    private static (int TotalPages, bool HasNextPage, bool HasPreviousPage) CalculatePaginationMetadata(
+        int totalCount,
+        int pageNumber,
+        int pageSize)
+    {
+        var totalPages = (int)Math.Ceiling((double)totalCount / pageSize);
+        var hasNextPage = pageNumber < totalPages;
+        var hasPreviousPage = pageNumber > 1;
+
+        return (totalPages, hasNextPage, hasPreviousPage);
     }
 
     protected override string GenerateInsertQuery()

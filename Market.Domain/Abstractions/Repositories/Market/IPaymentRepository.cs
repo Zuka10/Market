@@ -1,5 +1,6 @@
 ﻿using Market.Domain.Entities.Market;
 using Market.Domain.Enums;
+using Market.Domain.Filters;
 
 namespace Market.Domain.Abstractions.Repositories.Market;
 
@@ -11,4 +12,5 @@ public interface IPaymentRepository : IGenericRepository<Payment>
     Task<IEnumerable<Payment>> GetPaymentsByDateRangeAsync(DateTime startDate, DateTime endDate);
     Task<decimal> GetTotalPaymentsAsync(DateTime? startDate = null, DateTime? endDate = null);
     Task<decimal> GetCompletedPaymentsByOrderAsync(long orderId);
+    Task<PagedResult<Payment>> GetPaymentsAsync(PaymentFilterParameters filterParams);
 }
