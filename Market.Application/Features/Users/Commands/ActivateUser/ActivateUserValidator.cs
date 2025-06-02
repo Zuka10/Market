@@ -1,4 +1,5 @@
-﻿using FluentValidation;
+﻿
+using FluentValidation;
 
 namespace Market.Application.Features.Users.Commands.ActivateUser;
 

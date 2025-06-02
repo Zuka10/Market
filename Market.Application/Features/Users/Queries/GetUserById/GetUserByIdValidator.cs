@@ -7,7 +7,6 @@ public class GetUserByIdValidator : AbstractValidator<GetUserByIdQuery>
     public GetUserByIdValidator()
     {
         RuleFor(x => x.UserId)
-            .GreaterThan(0)
-            .WithMessage("User ID must be greater than zero.");
+            .GreaterThan(0).WithMessage("User ID must be greater than 0.");
     }
 }

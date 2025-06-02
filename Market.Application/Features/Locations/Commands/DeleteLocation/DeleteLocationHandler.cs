@@ -11,7 +11,7 @@ public class DeleteLocationHandler(IUnitOfWork unitOfWork) : ICommandHandler<Del
     public async Task<BaseResponse<bool>> Handle(DeleteLocationCommand request, CancellationToken cancellationToken)
     {
         var location = await _unitOfWork.Locations.GetByIdAsync(request.LocationId);
-        if (location == null)
+        if (location is null)
         {
             return BaseResponse<bool>.Failure(["Location not found."]);
         }

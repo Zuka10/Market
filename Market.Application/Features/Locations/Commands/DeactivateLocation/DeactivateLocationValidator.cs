@@ -7,7 +7,6 @@ public class DeactivateLocationValidator : AbstractValidator<DeactivateLocationC
     public DeactivateLocationValidator()
     {
         RuleFor(x => x.LocationId)
-            .GreaterThan(0)
-            .WithMessage("Location ID is required.");
+            .GreaterThan(0).WithMessage("Location ID must be greater than 0.");
     }
 }

@@ -26,7 +26,7 @@ public class GetLocationsHandler(IUnitOfWork unitOfWork, IMapper mapper) : IQuer
             SortDirection = request.SortDirection?.Trim()?.ToLower()
         };
 
-        var pagedLocations = await _unitOfWork.Locations.GetLocationsPagedAsync(filterParams);
+        var pagedLocations = await _unitOfWork.Locations.GetLocationsAsync(filterParams);
         var locationDtos = _mapper.Map<List<LocationDto>>(pagedLocations.Items);
 
         var pagedResult = new PagedResult<LocationDto>
@@ -40,6 +40,27 @@ public class GetLocationsHandler(IUnitOfWork unitOfWork, IMapper mapper) : IQuer
             HasPreviousPage = pagedLocations.HasPreviousPage
         };
 
-        return BaseResponse<PagedResult<LocationDto>>.Success(pagedResult, "Locations retrieved successfully.");
+        var message = BuildSuccessMessage(request, pagedResult.TotalCount);
+        return BaseResponse<PagedResult<LocationDto>>.Success(pagedResult, message);
+    }
+
+    private static string BuildSuccessMessage(GetLocationsQuery request, int totalCount)
+    {
+        if (HasAnyFilterCriteria(request))
+        {
+            return $"Retrieved {totalCount} vendors matching the filter criteria.";
+        }
+
+        return $"Retrieved {totalCount} vendors successfully.";
+    }
+
+    private static bool HasAnyFilterCriteria(GetLocationsQuery request)
+    {
+        return !string.IsNullOrWhiteSpace(request.SearchTerm) ||
+               !string.IsNullOrWhiteSpace(request.City) ||
+               !string.IsNullOrWhiteSpace(request.Country) ||
+               !string.IsNullOrWhiteSpace(request.SortDirection) ||
+               !string.IsNullOrWhiteSpace(request.SortBy) ||
+               request.IsActive.HasValue;
     }
 }

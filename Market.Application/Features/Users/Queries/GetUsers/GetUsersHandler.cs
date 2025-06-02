@@ -2,6 +2,7 @@
 using Market.Application.Common.Interfaces;
 using Market.Application.Common.Models;
 using Market.Application.DTOs.Auth;
+using Market.Application.Features.Users.Queries.GetUsers;
 using Market.Domain.Abstractions;
 using Market.Domain.Filters;
 
@@ -14,7 +15,6 @@ public class GetUsersHandler(IUnitOfWork unitOfWork, IMapper mapper) : IQueryHan
 
     public async Task<BaseResponse<PagedResult<UserDto>>> Handle(GetUsersQuery request, CancellationToken cancellationToken)
     {
-        // Create filter parameters
         var filterParams = new UserFilterParameters
         {
             PageNumber = request.PageNumber,
@@ -26,13 +26,9 @@ public class GetUsersHandler(IUnitOfWork unitOfWork, IMapper mapper) : IQueryHan
             SortDirection = request.SortDirection?.Trim()?.ToLower()
         };
 
-        // Get paginated and filtered users
-        var pagedUsers = await _unitOfWork.Users.GetPagedUsersAsync(filterParams);
-
-        // Map to DTOs using existing UserDto
+        var pagedUsers = await _unitOfWork.Users.GetUsersAsync(filterParams);
         var userDtos = _mapper.Map<List<UserDto>>(pagedUsers.Items);
 
-        // Create paged result
         var pagedResult = new PagedResult<UserDto>
         {
             Items = userDtos,
@@ -44,6 +40,26 @@ public class GetUsersHandler(IUnitOfWork unitOfWork, IMapper mapper) : IQueryHan
             HasPreviousPage = pagedUsers.HasPreviousPage
         };
 
-        return BaseResponse<PagedResult<UserDto>>.Success(pagedResult, "Users retrieved successfully.");
+        var message = BuildSuccessMessage(request, pagedResult.TotalCount);
+        return BaseResponse<PagedResult<UserDto>>.Success(pagedResult, message);
+    }
+
+    private static string BuildSuccessMessage(GetUsersQuery request, int totalCount)
+    {
+        if (HasAnyFilterCriteria(request))
+        {
+            return $"Retrieved {totalCount} vendors matching the filter criteria.";
+        }
+
+        return $"Retrieved {totalCount} vendors successfully.";
+    }
+
+    private static bool HasAnyFilterCriteria(GetUsersQuery request)
+    {
+        return !string.IsNullOrWhiteSpace(request.SearchTerm) ||
+               !string.IsNullOrWhiteSpace(request.SortDirection) ||
+               !string.IsNullOrWhiteSpace(request.SortBy) ||
+               request.IsActive.HasValue ||
+               request.RoleId.HasValue;
     }
 }

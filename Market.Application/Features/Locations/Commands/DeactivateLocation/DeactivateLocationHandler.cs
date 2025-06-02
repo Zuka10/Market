@@ -1,7 +1,5 @@
-﻿using AutoMapper;
-using Market.Application.Common.Interfaces;
+﻿using Market.Application.Common.Interfaces;
 using Market.Application.Common.Models;
-using Market.Application.DTOs.Market;
 using Market.Domain.Abstractions;
 
 namespace Market.Application.Features.Locations.Commands.DeactivateLocation;
@@ -13,7 +11,7 @@ public class DeactivateLocationHandler(IUnitOfWork unitOfWork) : ICommandHandler
     public async Task<BaseResponse<bool>> Handle(DeactivateLocationCommand request, CancellationToken cancellationToken)
     {
         var location = await _unitOfWork.Locations.GetByIdAsync(request.LocationId);
-        if (location == null)
+        if (location is null)
         {
             return BaseResponse<bool>.Failure(["Location not found."]);
         }

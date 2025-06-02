@@ -13,7 +13,7 @@ public class ActivateLocationHandler(IUnitOfWork unitOfWork) : ICommandHandler<A
     public async Task<BaseResponse<bool>> Handle(ActivateLocationCommand request, CancellationToken cancellationToken)
     {
         var location = await _unitOfWork.Locations.GetByIdAsync(request.LocationId);
-        if (location == null)
+        if (location is null)
         {
             return BaseResponse<bool>.Failure(["Location not found."]);
         }

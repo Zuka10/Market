@@ -35,7 +35,7 @@ public class GetUsersByRoleIdHandler(IUnitOfWork unitOfWork, IMapper mapper) : I
         };
 
         // Get paginated users by role
-        var pagedUsers = await _unitOfWork.Users.GetPagedUsersAsync(filterParams);
+        var pagedUsers = await _unitOfWork.Users.GetUsersAsync(filterParams);
 
         // Map to DTOs
         var userDtos = _mapper.Map<List<UserDto>>(pagedUsers.Items);

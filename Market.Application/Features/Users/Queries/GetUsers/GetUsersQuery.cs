@@ -2,7 +2,7 @@
 using Market.Application.DTOs.Auth;
 using Market.Domain.Filters;
 
-namespace Market.Application.Features.Users.Queries.GetAllUsers;
+namespace Market.Application.Features.Users.Queries.GetUsers;
 
 public record GetUsersQuery(
     int PageNumber = 1,

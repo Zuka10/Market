@@ -7,7 +7,6 @@ public class GetUsersInRoleValidator : AbstractValidator<GetUsersInRoleQuery>
     public GetUsersInRoleValidator()
     {
         RuleFor(x => x.RoleId)
-            .GreaterThan(0)
-            .WithMessage("Role ID must be greater than 0.");
+            .GreaterThan(0).WithMessage("Role ID must be greater than 0.");
     }
 }

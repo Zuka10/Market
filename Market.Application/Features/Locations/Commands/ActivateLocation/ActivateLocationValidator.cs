@@ -7,7 +7,6 @@ public class ActivateLocationValidator : AbstractValidator<ActivateLocationComma
     public ActivateLocationValidator()
     {
         RuleFor(x => x.LocationId)
-            .GreaterThan(0)
-            .WithMessage("Location ID is required.");
+            .GreaterThan(0).WithMessage("Location ID must be greater than 0.");
     }
 }
