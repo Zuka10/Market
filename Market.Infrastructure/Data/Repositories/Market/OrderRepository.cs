@@ -3,6 +3,7 @@ using Market.Domain.Abstractions.Repositories.Market;
 using Market.Domain.Entities.Auth;
 using Market.Domain.Entities.Market;
 using Market.Domain.Enums;
+using Market.Domain.Filters;
 using Market.Infrastructure.Constants;
 
 namespace Market.Infrastructure.Data.Repositories.Market;
@@ -120,27 +121,6 @@ public class OrderRepository(IDbConnectionFactory connectionFactory) :
         return await connection.QueryAsync<Order>(sql, new { StartDate = startDate, EndDate = endDate });
     }
 
-    public async Task<(IEnumerable<Order> Orders, int TotalCount)> GetPagedOrdersAsync(int page, int pageSize, OrderStatus? status = null)
-    {
-        using var connection = await _connectionFactory.CreateConnectionAsync();
-
-        var whereClause = status.HasValue ? "WHERE Status = @Status" : "";
-        var countSql = $"SELECT COUNT(*) FROM {FullTableName} {whereClause}";
-        var totalCount = await connection.QuerySingleAsync<int>(countSql, new { Status = (int?)status });
-
-        var offset = (page - 1) * pageSize;
-        var sql = $@"
-                SELECT * FROM {FullTableName} {whereClause}
-                ORDER BY OrderDate DESC
-                OFFSET @Offset ROWS
-                FETCH NEXT @PageSize ROWS ONLY";
-
-        var orders = await connection.QueryAsync<Order>(sql,
-            new { Status = (int?)status, Offset = offset, PageSize = pageSize });
-
-        return (orders, totalCount);
-    }
-
     public async Task<decimal> GetTotalSalesByLocationAsync(long locationId, DateTime? startDate = null, DateTime? endDate = null)
     {
         using var locationConnection = await _connectionFactory.CreateConnectionAsync();
@@ -206,6 +186,48 @@ public class OrderRepository(IDbConnectionFactory connectionFactory) :
         return count > 0;
     }
 
+    public async Task<PagedResult<Order>> GetOrdersAsync(OrderFilterParameters filterParams)
+    {
+        using var connection = await _connectionFactory.CreateConnectionAsync();
+
+        var (whereClause, parameters) = BuildWhereClause(filterParams);
+        var orderByClause = BuildOrderByClause(filterParams.SortBy, filterParams.SortDirection);
+        var (offset, pageSize) = CalculatePagination(filterParams.PageNumber, filterParams.PageSize);
+
+        parameters.Add("Offset", offset);
+        parameters.Add("PageSize", pageSize);
+
+        var countSql = BuildCountQuery(whereClause);
+        var dataSql = BuildDataQueryWithDetails(whereClause, orderByClause);
+
+        // Execute queries
+        var totalCount = await connection.QuerySingleAsync<int>(countSql, parameters);
+        var orders = await connection.QueryAsync<Order, Location, User, int, Order>(
+            dataSql,
+            (order, location, user, orderDetailCount) =>
+            {
+                order.Location = location;
+                order.User = user;
+                return order;
+            },
+            parameters,
+            splitOn: "LocationId_Split,UserId_Split,OrderDetailCount"
+        );
+
+        var paginationMetadata = CalculatePaginationMetadata(totalCount, filterParams.PageNumber, filterParams.PageSize);
+
+        return new PagedResult<Order>
+        {
+            Items = orders.ToList(),
+            TotalCount = totalCount,
+            Page = filterParams.PageNumber,
+            PageSize = filterParams.PageSize,
+            TotalPages = paginationMetadata.TotalPages,
+            HasNextPage = paginationMetadata.HasNextPage,
+            HasPreviousPage = paginationMetadata.HasPreviousPage
+        };
+    }
+
     public override async Task UpdateAsync(Order entity)
     {
         using var connection = await _connectionFactory.CreateConnectionAsync();
@@ -265,6 +287,162 @@ public class OrderRepository(IDbConnectionFactory connectionFactory) :
         await base.DeleteAsync(id);
     }
 
+    private static (string WhereClause, DynamicParameters Parameters) BuildWhereClause(OrderFilterParameters filterParams)
+    {
+        var whereConditions = new List<string>();
+        var parameters = new DynamicParameters();
+
+        if (!string.IsNullOrWhiteSpace(filterParams.SearchTerm))
+        {
+            whereConditions.Add("(o.OrderNumber LIKE @SearchTerm OR o.CustomerName LIKE @SearchTerm OR o.CustomerPhone LIKE @SearchTerm OR u.Username LIKE @SearchTerm OR u.FirstName LIKE @SearchTerm OR u.LastName LIKE @SearchTerm)");
+            parameters.Add("SearchTerm", $"%{filterParams.SearchTerm.Trim()}%");
+        }
+
+        if (!string.IsNullOrWhiteSpace(filterParams.OrderNumber))
+        {
+            whereConditions.Add("o.OrderNumber LIKE @OrderNumber");
+            parameters.Add("OrderNumber", $"%{filterParams.OrderNumber.Trim()}%");
+        }
+
+        if (!string.IsNullOrWhiteSpace(filterParams.CustomerName))
+        {
+            whereConditions.Add("o.CustomerName LIKE @CustomerName");
+            parameters.Add("CustomerName", $"%{filterParams.CustomerName.Trim()}%");
+        }
+
+        if (!string.IsNullOrWhiteSpace(filterParams.CustomerPhone))
+        {
+            whereConditions.Add("o.CustomerPhone LIKE @CustomerPhone");
+            parameters.Add("CustomerPhone", $"%{filterParams.CustomerPhone.Trim()}%");
+        }
+
+        if (filterParams.Status.HasValue)
+        {
+            whereConditions.Add("o.Status = @Status");
+            parameters.Add("Status", (int)filterParams.Status.Value);
+        }
+
+        if (filterParams.LocationId.HasValue)
+        {
+            whereConditions.Add("o.LocationId = @LocationId");
+            parameters.Add("LocationId", filterParams.LocationId.Value);
+        }
+
+        if (filterParams.UserId.HasValue)
+        {
+            whereConditions.Add("o.UserId = @UserId");
+            parameters.Add("UserId", filterParams.UserId.Value);
+        }
+
+        if (filterParams.DiscountId.HasValue)
+        {
+            whereConditions.Add("o.DiscountId = @DiscountId");
+            parameters.Add("DiscountId", filterParams.DiscountId.Value);
+        }
+
+        if (filterParams.StartDate.HasValue)
+        {
+            whereConditions.Add("o.OrderDate >= @StartDate");
+            parameters.Add("StartDate", filterParams.StartDate.Value);
+        }
+
+        if (filterParams.EndDate.HasValue)
+        {
+            whereConditions.Add("o.OrderDate <= @EndDate");
+            parameters.Add("EndDate", filterParams.EndDate.Value);
+        }
+
+        if (filterParams.MinTotal.HasValue)
+        {
+            whereConditions.Add("o.Total >= @MinTotal");
+            parameters.Add("MinTotal", filterParams.MinTotal.Value);
+        }
+
+        if (filterParams.MaxTotal.HasValue)
+        {
+            whereConditions.Add("o.Total <= @MaxTotal");
+            parameters.Add("MaxTotal", filterParams.MaxTotal.Value);
+        }
+
+        var whereClause = whereConditions.Any() ? "WHERE " + string.Join(" AND ", whereConditions) : "";
+        return (whereClause, parameters);
+    }
+
+    private static string BuildOrderByClause(string? sortBy, string? sortDirection)
+    {
+        var validSortFields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "id", "o.Id" },
+            { "ordernumber", "o.OrderNumber" },
+            { "orderdate", "o.OrderDate" },
+            { "total", "o.Total" },
+            { "subtotal", "o.SubTotal" },
+            { "status", "o.Status" },
+            { "customername", "o.CustomerName" },
+            { "customerphone", "o.CustomerPhone" },
+            { "locationname", "l.Name" },
+            { "username", "u.Username" },
+            { "createdat", "o.CreatedAt" },
+            { "updatedat", "o.UpdatedAt" }
+        };
+
+        var sortField = validSortFields.ContainsKey(sortBy ?? "orderdate")
+            ? validSortFields[sortBy ?? "orderdate"]
+            : validSortFields["orderdate"];
+
+        var direction = string.Equals(sortDirection, "asc", StringComparison.OrdinalIgnoreCase) ? "ASC" : "DESC";
+
+        return $"ORDER BY {sortField} {direction}";
+    }
+
+    private static (int Offset, int PageSize) CalculatePagination(int pageNumber, int pageSize)
+    {
+        var offset = (pageNumber - 1) * pageSize;
+        return (offset, pageSize);
+    }
+
+    private string BuildCountQuery(string whereClause)
+    {
+        return $@"
+        SELECT COUNT(*)
+        FROM {FullTableName} o
+        INNER JOIN market.Location l ON o.LocationId = l.Id
+        INNER JOIN auth.[User] u ON o.UserId = u.Id
+        {whereClause}";
+    }
+
+    private string BuildDataQueryWithDetails(string whereClause, string orderByClause)
+    {
+        return $@"
+        SELECT o.*,
+               l.Id as LocationId_Split, l.Name as LocationName, l.City,
+               u.Id as UserId_Split, u.Username, u.FirstName, u.LastName,
+               ISNULL(od.OrderDetailCount, 0) as OrderDetailCount
+        FROM {FullTableName} o
+        INNER JOIN market.Location l ON o.LocationId = l.Id
+        INNER JOIN auth.[User] u ON o.UserId = u.Id
+        LEFT JOIN (
+            SELECT OrderId, COUNT(*) as OrderDetailCount 
+            FROM market.OrderDetail 
+            GROUP BY OrderId
+        ) od ON o.Id = od.OrderId
+        {whereClause}
+        {orderByClause}
+        OFFSET @Offset ROWS
+        FETCH NEXT @PageSize ROWS ONLY";
+    }
+
+    private static (int TotalPages, bool HasNextPage, bool HasPreviousPage) CalculatePaginationMetadata(
+        int totalCount,
+        int pageNumber,
+        int pageSize)
+    {
+        var totalPages = (int)Math.Ceiling((double)totalCount / pageSize);
+        var hasNextPage = pageNumber < totalPages;
+        var hasPreviousPage = pageNumber > 1;
+
+        return (totalPages, hasNextPage, hasPreviousPage);
+    }
     private async Task ValidateForeignKeys(Order entity)
     {
         using var connection = await _connectionFactory.CreateConnectionAsync();

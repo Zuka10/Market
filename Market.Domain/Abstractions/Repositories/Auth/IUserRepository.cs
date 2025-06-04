@@ -1,4 +1,5 @@
 ﻿using Market.Domain.Entities.Auth;
+using Market.Domain.Filters;
 
 namespace Market.Domain.Abstractions.Repositories.Auth;
 
@@ -11,6 +12,5 @@ public interface IUserRepository : IGenericRepository<User>
     Task<IEnumerable<User>> GetActiveUsersAsync();
     Task<bool> IsUsernameExistsAsync(string username);
     Task<bool> IsEmailExistsAsync(string email);
-    Task<IEnumerable<User>> SearchUsersAsync(string searchTerm);
-    Task<(IEnumerable<User> Users, int TotalCount)> GetPagedUsersAsync(int page, int pageSize, bool? isActive = null);
+    Task<PagedResult<User>> GetUsersAsync(UserFilterParameters filterParams);
 }

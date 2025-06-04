@@ -1,6 +1,7 @@
 ﻿using Dapper;
 using Market.Domain.Abstractions.Repositories.Market;
 using Market.Domain.Entities.Market;
+using Market.Domain.Filters;
 using Market.Infrastructure.Constants;
 
 namespace Market.Infrastructure.Data.Repositories.Market;
@@ -127,26 +128,6 @@ public class ProcurementRepository(IDbConnectionFactory connectionFactory) :
         return await connection.QueryAsync<Procurement>(sql, new { StartDate = startDate, EndDate = endDate });
     }
 
-    public async Task<(IEnumerable<Procurement> Procurements, int TotalCount)> GetPagedProcurementsAsync(int page, int pageSize)
-    {
-        using var connection = await _connectionFactory.CreateConnectionAsync();
-
-        var countSql = $"SELECT COUNT(*) FROM {FullTableName}";
-        var totalCount = await connection.QuerySingleAsync<int>(countSql);
-
-        var offset = (page - 1) * pageSize;
-        var sql = $@"
-                SELECT * FROM {FullTableName}
-                ORDER BY ProcurementDate DESC
-                OFFSET @Offset ROWS
-                FETCH NEXT @PageSize ROWS ONLY";
-
-        var procurements = await connection.QueryAsync<Procurement>(sql,
-            new { Offset = offset, PageSize = pageSize });
-
-        return (procurements, totalCount);
-    }
-
     public async Task<decimal> GetTotalProcurementValueAsync(DateTime? startDate = null, DateTime? endDate = null)
     {
         using var connection = await _connectionFactory.CreateConnectionAsync();
@@ -172,6 +153,83 @@ public class ProcurementRepository(IDbConnectionFactory connectionFactory) :
         var sql = $"SELECT COUNT(1) FROM {FullTableName} WHERE ReferenceNo = @ReferenceNo";
         var count = await connection.QuerySingleAsync<int>(sql, new { ReferenceNo = referenceNo });
         return count > 0;
+    }
+
+    public async Task<PagedResult<Procurement>> GetProcurementsAsync(ProcurementFilterParameters filterParams)
+    {
+        using var connection = await _connectionFactory.CreateConnectionAsync();
+
+        var (whereClause, parameters) = BuildWhereClause(filterParams);
+        var orderByClause = BuildOrderByClause(filterParams.SortBy, filterParams.SortDirection);
+
+        // Count query
+        var countSql = BuildCountQuery(whereClause);
+        var totalCount = await connection.QuerySingleAsync<int>(countSql, parameters);
+
+        // Decide on pagination strategy
+        if (ShouldPaginate(filterParams, totalCount))
+        {
+            // Use database pagination for large results
+            var (offset, pageSize) = CalculatePagination(filterParams.PageNumber, filterParams.PageSize);
+            parameters.Add("Offset", offset);
+            parameters.Add("PageSize", pageSize);
+
+            var dataSql = BuildDataQueryWithPagination(whereClause, orderByClause);
+            var procurements = await connection.QueryAsync<Procurement, Vendor, Location, int, Procurement>(
+                dataSql,
+                (procurement, vendor, location, detailCount) =>
+                {
+                    procurement.Vendor = vendor;
+                    procurement.Location = location;
+                    // DetailCount can be used for additional info if needed
+                    return procurement;
+                },
+                parameters,
+                splitOn: "VendorId_Split,LocationId_Split,DetailCount"
+            );
+
+            var paginationMetadata = CalculatePaginationMetadata(totalCount, filterParams.PageNumber, filterParams.PageSize);
+
+            return new PagedResult<Procurement>
+            {
+                Items = procurements.ToList(),
+                TotalCount = totalCount,
+                Page = filterParams.PageNumber,
+                PageSize = filterParams.PageSize,
+                TotalPages = paginationMetadata.TotalPages,
+                HasNextPage = paginationMetadata.HasNextPage,
+                HasPreviousPage = paginationMetadata.HasPreviousPage
+            };
+        }
+        else
+        {
+            // Return all results for small datasets
+            var dataSql = BuildDataQuery(whereClause, orderByClause);
+            var procurements = await connection.QueryAsync<Procurement, Vendor, Location, Procurement>(
+                dataSql,
+                (procurement, vendor, location) =>
+                {
+                    procurement.Vendor = vendor;
+                    procurement.Location = location;
+                    return procurement;
+                },
+                parameters,
+                splitOn: "VendorId_Split,LocationId_Split"
+            );
+
+            var procurementsList = procurements.ToList();
+
+            return new PagedResult<Procurement>
+            {
+                Items = procurementsList,
+                TotalCount = totalCount,
+                Page = 1,
+                PageSize = procurementsList.Count,
+                TotalPages = 1,
+                HasNextPage = false,
+                HasPreviousPage = false
+            };
+        }
     }
 
     public override async Task UpdateAsync(Procurement entity)
@@ -223,6 +281,177 @@ public class ProcurementRepository(IDbConnectionFactory connectionFactory) :
         }
 
         await base.DeleteAsync(id);
+    }
+    private static (string WhereClause, DynamicParameters Parameters) BuildWhereClause(ProcurementFilterParameters filterParams)
+    {
+        var whereConditions = new List<string>();
+        var parameters = new DynamicParameters();
+
+        if (!string.IsNullOrWhiteSpace(filterParams.SearchTerm))
+        {
+            whereConditions.Add("(p.ReferenceNo LIKE @SearchTerm OR v.Name LIKE @SearchTerm OR v.ContactPersonName LIKE @SearchTerm OR l.Name LIKE @SearchTerm OR p.Notes LIKE @SearchTerm)");
+            parameters.Add("SearchTerm", $"%{filterParams.SearchTerm.Trim()}%");
+        }
+
+        if (!string.IsNullOrWhiteSpace(filterParams.ReferenceNo))
+        {
+            whereConditions.Add("p.ReferenceNo LIKE @ReferenceNo");
+            parameters.Add("ReferenceNo", $"%{filterParams.ReferenceNo.Trim()}%");
+        }
+
+        if (filterParams.VendorId.HasValue)
+        {
+            whereConditions.Add("p.VendorId = @VendorId");
+            parameters.Add("VendorId", filterParams.VendorId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(filterParams.VendorName))
+        {
+            whereConditions.Add("v.Name LIKE @VendorName");
+            parameters.Add("VendorName", $"%{filterParams.VendorName.Trim()}%");
+        }
+
+        if (filterParams.LocationId.HasValue)
+        {
+            whereConditions.Add("p.LocationId = @LocationId");
+            parameters.Add("LocationId", filterParams.LocationId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(filterParams.LocationName))
+        {
+            whereConditions.Add("l.Name LIKE @LocationName");
+            parameters.Add("LocationName", $"%{filterParams.LocationName.Trim()}%");
+        }
+
+        if (filterParams.StartDate.HasValue)
+        {
+            whereConditions.Add("p.ProcurementDate >= @StartDate");
+            parameters.Add("StartDate", filterParams.StartDate.Value);
+        }
+
+        if (filterParams.EndDate.HasValue)
+        {
+            whereConditions.Add("p.ProcurementDate <= @EndDate");
+            parameters.Add("EndDate", filterParams.EndDate.Value);
+        }
+
+        if (filterParams.MinAmount.HasValue)
+        {
+            whereConditions.Add("p.TotalAmount >= @MinAmount");
+            parameters.Add("MinAmount", filterParams.MinAmount.Value);
+        }
+
+        if (filterParams.MaxAmount.HasValue)
+        {
+            whereConditions.Add("p.TotalAmount <= @MaxAmount");
+            parameters.Add("MaxAmount", filterParams.MaxAmount.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(filterParams.Notes))
+        {
+            whereConditions.Add("p.Notes LIKE @Notes");
+            parameters.Add("Notes", $"%{filterParams.Notes.Trim()}%");
+        }
+
+        var whereClause = whereConditions.Any() ? "WHERE " + string.Join(" AND ", whereConditions) : "";
+        return (whereClause, parameters);
+    }
+
+    private static string BuildOrderByClause(string? sortBy, string? sortDirection)
+    {
+        var validSortFields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "id", "p.Id" },
+            { "referenceno", "p.ReferenceNo" },
+            { "procurementdate", "p.ProcurementDate" },
+            { "totalamount", "p.TotalAmount" },
+            { "vendorname", "v.Name" },
+            { "locationname", "l.Name" },
+            { "notes", "p.Notes" },
+            { "createdat", "p.CreatedAt" },
+            { "updatedat", "p.UpdatedAt" }
+        };
+
+        var sortField = validSortFields.ContainsKey(sortBy ?? "procurementdate")
+            ? validSortFields[sortBy ?? "procurementdate"]
+            : validSortFields["procurementdate"];
+
+        var direction = string.Equals(sortDirection, "asc", StringComparison.OrdinalIgnoreCase) ? "ASC" : "DESC";
+
+        return $"ORDER BY {sortField} {direction}";
+    }
+
+    private static (int Offset, int PageSize) CalculatePagination(int pageNumber, int pageSize)
+    {
+        var offset = (pageNumber - 1) * pageSize;
+        return (offset, pageSize);
+    }
+
+    private static bool ShouldPaginate(ProcurementFilterParameters filterParams, int totalCount)
+    {
+        // Use pagination when:
+        // 1. Total count is large (>500 records for procurement data)
+        // 2. Specific page size is requested and reasonable
+        // 3. Page number is greater than 1
+        return totalCount > 500 ||
+               (filterParams.PageSize <= 100 && filterParams.PageNumber > 1) ||
+               (filterParams.PageSize <= 50 && totalCount > 100);
+    }
+
+    private string BuildCountQuery(string whereClause)
+    {
+        return $@"
+        SELECT COUNT(*)
+        FROM {FullTableName} p
+        INNER JOIN market.Vendor v ON p.VendorId = v.Id
+        INNER JOIN market.Location l ON p.LocationId = l.Id
+        {whereClause}";
+    }
+
+    private string BuildDataQuery(string whereClause, string orderByClause)
+    {
+        return $@"
+        SELECT p.*,
+               v.Id as VendorId_Split, v.Name as VendorName, v.ContactPersonName, v.Email as VendorEmail,
+               l.Id as LocationId_Split, l.Name as LocationName, l.City, l.Country
+        FROM {FullTableName} p
+        INNER JOIN market.Vendor v ON p.VendorId = v.Id
+        INNER JOIN market.Location l ON p.LocationId = l.Id
+        {whereClause}
+        {orderByClause}";
+    }
+
+    private string BuildDataQueryWithPagination(string whereClause, string orderByClause)
+    {
+        return $@"
+        SELECT p.*,
+               v.Id as VendorId_Split, v.Name as VendorName, v.ContactPersonName, v.Email as VendorEmail,
+               l.Id as LocationId_Split, l.Name as LocationName, l.City, l.Country,
+               ISNULL(pd.DetailCount, 0) as DetailCount
+        FROM {FullTableName} p
+        INNER JOIN market.Vendor v ON p.VendorId = v.Id
+        INNER JOIN market.Location l ON p.LocationId = l.Id
+        LEFT JOIN (
+            SELECT ProcurementId, COUNT(*) as DetailCount 
+            FROM market.ProcurementDetail 
+            GROUP BY ProcurementId
+        ) pd ON p.Id = pd.ProcurementId
+        {whereClause}
+        {orderByClause}
+        OFFSET @Offset ROWS
+        FETCH NEXT @PageSize ROWS ONLY";
+    }
+
+    private static (int TotalPages, bool HasNextPage, bool HasPreviousPage) CalculatePaginationMetadata(
+        int totalCount,
+        int pageNumber,
+        int pageSize)
+    {
+        var totalPages = (int)Math.Ceiling((double)totalCount / pageSize);
+        var hasNextPage = pageNumber < totalPages;
+        var hasPreviousPage = pageNumber > 1;
+
+        return (totalPages, hasNextPage, hasPreviousPage);
     }
 
     private async Task ValidateForeignKeys(Procurement entity)

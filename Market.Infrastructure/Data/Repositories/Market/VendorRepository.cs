@@ -1,6 +1,7 @@
 ﻿using Dapper;
 using Market.Domain.Abstractions.Repositories.Market;
 using Market.Domain.Entities.Market;
+using Market.Domain.Filters;
 using Market.Infrastructure.Constants;
 
 namespace Market.Infrastructure.Data.Repositories.Market;
@@ -99,16 +100,6 @@ public class VendorRepository(IDbConnectionFactory connectionFactory) :
             splitOn: "Id,Id");
     }
 
-    public async Task<IEnumerable<Vendor>> SearchVendorsAsync(string searchTerm)
-    {
-        using var connection = await _connectionFactory.CreateConnectionAsync();
-        var sql = $@"
-                SELECT * FROM {FullTableName} 
-                WHERE (Name LIKE @SearchTerm OR ContactPersonName LIKE @SearchTerm OR Email LIKE @SearchTerm) 
-                  AND IsActive = 1";
-        return await connection.QueryAsync<Vendor>(sql, new { SearchTerm = $"%{searchTerm}%" });
-    }
-
     public async Task<IEnumerable<Vendor>> GetVendorsByLocationAsync(long locationId)
     {
         using var locationConnection = await _connectionFactory.CreateConnectionAsync();
@@ -133,6 +124,47 @@ public class VendorRepository(IDbConnectionFactory connectionFactory) :
         var sql = $"SELECT COUNT(1) FROM {FullTableName} WHERE Email = @Email";
         var count = await connection.QuerySingleAsync<int>(sql, new { Email = email });
         return count > 0;
+    }
+
+    public async Task<PagedResult<Vendor>> GetVendorsAsync(VendorFilterParameters filterParams)
+    {
+        using var connection = await _connectionFactory.CreateConnectionAsync();
+
+        var (whereClause, parameters) = BuildWhereClause(filterParams);
+        var orderByClause = BuildOrderByClause(filterParams.SortBy, filterParams.SortDirection);
+        var (offset, pageSize) = CalculatePagination(filterParams.PageNumber, filterParams.PageSize);
+
+        parameters.Add("Offset", offset);
+        parameters.Add("PageSize", pageSize);
+
+        var countSql = BuildCountQuery(whereClause);
+        var dataSql = BuildDataQueryWithCounts(whereClause, orderByClause);
+
+        // Execute queries
+        var totalCount = await connection.QuerySingleAsync<int>(countSql, parameters);
+        var vendors = await connection.QueryAsync<Vendor, int, int, Vendor>(
+            dataSql,
+            (vendor, locationCount, procurementCount) =>
+            {
+                // Set the counts (these would be mapped to DTO properties if needed)
+                return vendor;
+            },
+            parameters,
+            splitOn: "LocationCount,ProcurementCount"
+        );
+
+        var paginationMetadata = CalculatePaginationMetadata(totalCount, filterParams.PageNumber, filterParams.PageSize);
+
+        return new PagedResult<Vendor>
+        {
+            Items = vendors.ToList(),
+            TotalCount = totalCount,
+            Page = filterParams.PageNumber,
+            PageSize = filterParams.PageSize,
+            TotalPages = paginationMetadata.TotalPages,
+            HasNextPage = paginationMetadata.HasNextPage,
+            HasPreviousPage = paginationMetadata.HasPreviousPage
+        };
     }
 
     public override async Task UpdateAsync(Vendor entity)
@@ -189,6 +221,130 @@ public class VendorRepository(IDbConnectionFactory connectionFactory) :
         }
 
         await base.DeleteAsync(id);
+    }
+
+    private static (string WhereClause, DynamicParameters Parameters) BuildWhereClause(VendorFilterParameters filterParams)
+    {
+        var whereConditions = new List<string>();
+        var parameters = new DynamicParameters();
+
+        if (filterParams.IsActive.HasValue)
+        {
+            whereConditions.Add("v.IsActive = @IsActive");
+            parameters.Add("IsActive", filterParams.IsActive.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(filterParams.SearchTerm))
+        {
+            whereConditions.Add("(v.Name LIKE @SearchTerm OR v.ContactPersonName LIKE @SearchTerm OR v.Email LIKE @SearchTerm OR v.PhoneNumber LIKE @SearchTerm)");
+            parameters.Add("SearchTerm", $"%{filterParams.SearchTerm.Trim()}%");
+        }
+
+        if (!string.IsNullOrWhiteSpace(filterParams.Email))
+        {
+            whereConditions.Add("v.Email LIKE @Email");
+            parameters.Add("Email", $"%{filterParams.Email.Trim()}%");
+        }
+
+        if (!string.IsNullOrWhiteSpace(filterParams.ContactPersonName))
+        {
+            whereConditions.Add("v.ContactPersonName LIKE @ContactPersonName");
+            parameters.Add("ContactPersonName", $"%{filterParams.ContactPersonName.Trim()}%");
+        }
+
+        if (filterParams.MinCommissionRate.HasValue)
+        {
+            whereConditions.Add("v.CommissionRate >= @MinCommissionRate");
+            parameters.Add("MinCommissionRate", filterParams.MinCommissionRate.Value);
+        }
+
+        if (filterParams.MaxCommissionRate.HasValue)
+        {
+            whereConditions.Add("v.CommissionRate <= @MaxCommissionRate");
+            parameters.Add("MaxCommissionRate", filterParams.MaxCommissionRate.Value);
+        }
+
+        if (filterParams.LocationId.HasValue)
+        {
+            whereConditions.Add("EXISTS (SELECT 1 FROM market.VendorLocation vl WHERE vl.VendorId = v.Id AND vl.LocationId = @LocationId AND vl.IsActive = 1)");
+            parameters.Add("LocationId", filterParams.LocationId.Value);
+        }
+
+        var whereClause = whereConditions.Any() ? "WHERE " + string.Join(" AND ", whereConditions) : "";
+        return (whereClause, parameters);
+    }
+
+    private static string BuildOrderByClause(string? sortBy, string? sortDirection)
+    {
+        var validSortFields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        { "id", "v.Id" },
+        { "name", "v.Name" },
+        { "email", "v.Email" },
+        { "contactpersonname", "v.ContactPersonName" },
+        { "phonenumber", "v.PhoneNumber" },
+        { "commissionrate", "v.CommissionRate" },
+        { "createdat", "v.CreatedAt" },
+        { "updatedat", "v.UpdatedAt" }
+    };
+
+        var sortField = validSortFields.ContainsKey(sortBy ?? "name")
+            ? validSortFields[sortBy ?? "name"]
+            : validSortFields["name"];
+
+        var direction = string.Equals(sortDirection, "desc", StringComparison.OrdinalIgnoreCase) ? "DESC" : "ASC";
+
+        return $"ORDER BY {sortField} {direction}";
+    }
+
+    private static (int Offset, int PageSize) CalculatePagination(int pageNumber, int pageSize)
+    {
+        var offset = (pageNumber - 1) * pageSize;
+        return (offset, pageSize);
+    }
+
+    private string BuildCountQuery(string whereClause)
+    {
+        return $@"
+        SELECT COUNT(*)
+        FROM {FullTableName} v
+        {whereClause}";
+    }
+
+    private string BuildDataQueryWithCounts(string whereClause, string orderByClause)
+    {
+        return $@"
+        SELECT v.*,
+               ISNULL(vl.LocationCount, 0) as LocationCount,
+               ISNULL(p.ProcurementCount, 0) as ProcurementCount
+        FROM {FullTableName} v
+        LEFT JOIN (
+            SELECT VendorId, COUNT(*) as LocationCount 
+            FROM market.VendorLocation 
+            WHERE IsActive = 1
+            GROUP BY VendorId
+        ) vl ON v.Id = vl.VendorId
+        LEFT JOIN (
+            SELECT VendorId, COUNT(*) as ProcurementCount 
+            FROM market.Procurement 
+            GROUP BY VendorId
+        ) p ON v.Id = p.VendorId
+        {whereClause}
+        {orderByClause}
+        OFFSET @Offset ROWS
+        FETCH NEXT @PageSize ROWS ONLY";
+    }
+
+    private static (int TotalPages, bool HasNextPage, bool HasPreviousPage) CalculatePaginationMetadata(
+        int totalCount,
+        int pageNumber,
+        int pageSize)
+    {
+        var totalPages = (int)Math.Ceiling((double)totalCount / pageSize);
+        var hasNextPage = pageNumber < totalPages;
+        var hasPreviousPage = pageNumber > 1;
+
+        return (totalPages, hasNextPage, hasPreviousPage);
     }
 
     private static void ValidateVendorRules(Vendor entity)
