@@ -1,6 +1,7 @@
 using System.Reflection;
 using Market.Infrastructure;
 using Market.Application;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -18,6 +19,10 @@ builder.Services.AddSwaggerGen(c =>
     c.IncludeXmlComments(xmlPath);
 });
 
+builder.Services.AddHealthChecks()
+    .AddCheck("self", () => HealthCheckResult.Healthy("The application is healthy."))
+    .AddSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")!);
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -26,10 +31,16 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+else
+{
+    app.UseHsts();
+}
 
 app.UseHttpsRedirection();
 
 app.UseAuthorization();
+
+app.MapHealthChecks("/health");
 
 app.MapControllers();
 
