@@ -1,4 +1,21 @@
-﻿using Market.API.Models;
+﻿using Market.Application.Common.Models;
+using Market.Application.DTOs.Market;
+using Market.Application.Features.Orders.Commands.ApplyDiscountToOrder;
+using Market.Application.Features.Orders.Commands.CancelOrder;
+using Market.Application.Features.Orders.Commands.CreateOrder;
+using Market.Application.Features.Orders.Commands.UpdateOrder;
+using Market.Application.Features.Orders.Commands.UpdateOrderStatus;
+using Market.Application.Features.Orders.Queries.GetOrderById;
+using Market.Application.Features.Orders.Queries.GetOrderByOrderNumber;
+using Market.Application.Features.Orders.Queries.GetOrderByUser;
+using Market.Application.Features.Orders.Queries.GetOrders;
+using Market.Application.Features.Orders.Queries.GetOrdersByDateRange;
+using Market.Application.Features.Orders.Queries.GetOrdersByLocation;
+using Market.Application.Features.Orders.Queries.GetOrdersByStatus;
+using Market.Domain.Enums;
+using Market.Domain.Filters;
+using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Market.API.Controllers;
@@ -8,163 +25,209 @@ namespace Market.API.Controllers;
 /// </summary>
 [Route("api/[controller]")]
 [ApiController]
-public class OrderController : ControllerBase
+[Authorize(Roles = "Admin")]
+public class OrderController(IMediator mediator) : ControllerBase
 {
-    private static readonly List<Order> _orders =
-    [
-        new Order
-        {
-            Id = 1,
-            CustomerName = "John Doe",
-            OrderDate = DateTime.Now,
-            OrderDetails =
-            [
-                new OrderDetail
-                {
-                    Id = 1,
-                    ProductId = 1,
-                    Quantity = 2,
-                    UnitPrice = 999.99m
-                },
-                new OrderDetail
-                {
-                    Id = 2,
-                    ProductId = 3,
-                    Quantity = 1,
-                    UnitPrice = 19.99m
-                }
-            ]
-        },
-        new Order
-        {
-            Id = 2,
-            CustomerName = "Jane Smith",
-            OrderDate = DateTime.Now,
-            OrderDetails =
-            [
-                new OrderDetail
-                {
-                    Id = 3,
-                    ProductId = 2,
-                    Quantity = 1,
-                    UnitPrice = 699.99m
-                },
-                new OrderDetail
-                {
-                    Id = 4,
-                    ProductId = 4,
-                    Quantity = 3,
-                    UnitPrice = 15.99m
-                }
-            ]
-        },
-        new Order
-        {
-            Id = 3,
-            CustomerName = "Alice Johnson",
-            OrderDate = DateTime.Now,
-            OrderDetails =
-            [
-                new OrderDetail
-                {
-                    Id = 5,
-                    ProductId = 5,
-                    Quantity = 1,
-                    UnitPrice = 49.99m
-                }
-            ]
-        }
-    ];
+    private readonly IMediator _mediator = mediator;
 
     /// <summary>
-    /// Gets all orders.
+    /// Retrieves a paginated and filtered list of orders
     /// </summary>
-    /// <returns>List of orders.</returns>
+    /// <param name="query">Order search filters</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Paginated list of orders</returns>
     [HttpGet]
-    public ActionResult<IEnumerable<Order>> GetAll()
+    public async Task<ActionResult<BaseResponse<PagedResult<OrderDto>>>> GetAll(
+        [FromQuery] GetOrdersQuery query,
+        CancellationToken cancellationToken = default)
     {
-        return Ok(_orders);
+        var orders = await _mediator.Send(query, cancellationToken);
+        return Ok(orders);
     }
 
     /// <summary>
-    /// Gets a specific order by ID.
+    /// Retrieves a specific order by its ID
     /// </summary>
-    /// <param name="id">Order ID.</param>
-    /// <returns>The matching order.</returns>
-    [HttpGet("{id}")]
-    public ActionResult<Order> GetById(int id)
+    /// <param name="id">The order ID</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>The order details</returns>
+    [HttpGet("{id:int}")]
+    public async Task<IActionResult> GetOrderById(
+        int id,
+        CancellationToken cancellationToken = default)
     {
-        var order = _orders.FirstOrDefault(o => o.Id == id);
-        if (order is null)
-        {
-            return NotFound();
-        }
-        return Ok(order);
+        var query = new GetOrderByIdQuery(Id: id);
+        var result = await _mediator.Send(query, cancellationToken);
+        return Ok(result);
     }
 
     /// <summary>
-    /// Creates a new order.
+    /// Creates a new order
     /// </summary>
-    /// <param name="order">Order object to create.</param>
-    /// <returns>The created order.</returns>
+    /// <param name="command">Order creation details</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>The created order</returns>
     [HttpPost]
-    public ActionResult<Order> Create([FromBody] Order order)
+    public async Task<IActionResult> CreateOrder(
+        [FromBody] CreateOrderCommand command,
+        CancellationToken cancellationToken = default)
     {
-        if (order is null)
-        {
-            return BadRequest();
-        }
-
-        order.Id = _orders.Max(o => o.Id) + 1;
-        _orders.Add(order);
-        return CreatedAtAction(nameof(GetById), new { id = order.Id }, order);
+        var result = await _mediator.Send(command, cancellationToken);
+        return Ok(result);
     }
 
     /// <summary>
-    /// Updates an existing order.
+    /// Updates an existing order
     /// </summary>
-    /// <param name="id">ID of the order to update (from route).</param>
-    /// <param name="order">Updated order object.</param>
-    /// <returns>Returns 200 OK if successful, 404 if not found, or 400 if request is invalid.</returns>
-    /// <response code="200">A specific order.</response>
-    /// <response code="400">Order is null</response>
-    /// <response code="404">No order with the provided Id were found.</response>
-    [HttpPut("{id}")]
-    public ActionResult<Order> Update([FromRoute] int id, [FromBody] Order order)
+    /// <param name="id">The order ID to update</param>
+    /// <param name="command">Order update details</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>The updated order</returns>
+    [HttpPut("{id:int}")]
+    public async Task<IActionResult> UpdateOrder(
+        int id,
+        [FromBody] UpdateOrderCommand command,
+        CancellationToken cancellationToken = default)
     {
-        if (order is null)
-        {
-            return BadRequest();
-        }
-
-        var existingOrder = _orders.FirstOrDefault(o => o.Id == id);
-        if (existingOrder is null)
-        {
-            return NotFound();
-        }
-
-        existingOrder.CustomerName = order.CustomerName;
-        existingOrder.OrderDate = order.OrderDate;
-        existingOrder.OrderDetails = order.OrderDetails;
-
-        return Ok();
+        var updateCommand = command with { OrderId = id };
+        var result = await _mediator.Send(updateCommand, cancellationToken);
+        return Ok(result);
     }
 
     /// <summary>
-    /// Deletes an order by ID.
+    /// Cancels an order
     /// </summary>
-    /// <param name="id">ID of the order to delete.</param>
-    /// <returns>Ok.</returns>
-    [HttpDelete("{id}")]
-    public ActionResult Delete(int id)
+    /// <param name="id">The order ID to cancel</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Cancellation confirmation</returns>
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> CancelOrder(
+        int id,
+        CancellationToken cancellationToken = default)
     {
-        var order = _orders.FirstOrDefault(o => o.Id == id);
-        if (order is null)
-        {
-            return NotFound();
-        }
+        var command = new CancelOrderCommand(OrderId: id);
+        var result = await _mediator.Send(command, cancellationToken);
+        return Ok(result);
+    }
 
-        _orders.Remove(order);
-        return Ok();
+    /// <summary>
+    /// Updates the status of an order
+    /// </summary>
+    /// <param name="id">The order ID</param>
+    /// <param name="command">Status update details</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Updated order with new status</returns>
+    [HttpPatch("{id:int}/status")]
+    public async Task<IActionResult> UpdateOrderStatus(
+        int id,
+        [FromBody] UpdateOrderStatusCommand command,
+        CancellationToken cancellationToken = default)
+    {
+        var updateCommand = command with { OrderId = id };
+        var result = await _mediator.Send(updateCommand, cancellationToken);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Applies a discount to an order
+    /// </summary>
+    /// <param name="id">The order ID</param>
+    /// <param name="command">Discount application details</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Updated order with applied discount</returns>
+    [HttpPatch("{id:int}/discount")]
+    public async Task<IActionResult> ApplyDiscount(
+        int id,
+        [FromBody] ApplyDiscountToOrderCommand command,
+        CancellationToken cancellationToken = default)
+    {
+        var discountCommand = command with { OrderId = id };
+        var result = await _mediator.Send(discountCommand, cancellationToken);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Retrieves an order by its order number
+    /// </summary>
+    /// <param name="number">The order number</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>The order details</returns>
+    [HttpGet("number/{number}")]
+    public async Task<IActionResult> GetOrderByNumber(
+        string number,
+        CancellationToken cancellationToken = default)
+    {
+        var query = new GetOrderByNumberQuery(OrderNumber: number);
+        var result = await _mediator.Send(query, cancellationToken);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Retrieves orders for a specific user
+    /// </summary>
+    /// <param name="id">The user ID</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Paginated list of orders for the user</returns>
+    [HttpGet("user/{id:int}")]
+    public async Task<IActionResult> GetOrdersByUser(
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        var query = new GetOrdersByUserQuery(UserId: id);
+        var result = await _mediator.Send(query, cancellationToken);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Retrieves orders for a specific location
+    /// </summary>
+    /// <param name="id">The location ID</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Paginated list of orders for the location</returns>
+    [HttpGet("location/{id:int}")]
+    public async Task<IActionResult> GetOrdersByLocation(
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        var query = new GetOrdersByLocationQuery(LocationId: id);
+        var result = await _mediator.Send(query, cancellationToken);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Retrieves orders by status
+    /// </summary>
+    /// <param name="status">The order status</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Paginated list of orders with the specified status</returns>
+    [HttpGet("status/{status}")]
+    public async Task<IActionResult> GetOrdersByStatus(
+        OrderStatus status,
+        CancellationToken cancellationToken = default)
+    {
+        var query = new GetOrdersByStatusQuery(Status: status);
+        var result = await _mediator.Send(query, cancellationToken);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Retrieves orders within a specified date range
+    /// </summary>
+    /// <param name="startDate">Start date for the range</param>
+    /// <param name="endDate">End date for the range</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Paginated list of orders within the date range</returns>
+    [HttpGet("date-range")]
+    public async Task<IActionResult> GetOrdersByDateRange(
+        [FromQuery] DateTime startDate,
+        [FromQuery] DateTime endDate,
+        CancellationToken cancellationToken = default)
+    {
+        var query = new GetOrdersByDateRangeQuery(
+            StartDate: startDate,
+            EndDate: endDate);
+
+        var result = await _mediator.Send(query, cancellationToken);
+        return Ok(result);
     }
 }

@@ -5,5 +5,5 @@ namespace Market.Application.Features.Products.Queries.GetProductsByCategory;
 
 public record GetProductsByCategoryQuery(
     long CategoryId,
-    bool? IsAvailable = true
+    bool? IsAvaliable = true
 ) : IQuery<List<ProductDto>>;

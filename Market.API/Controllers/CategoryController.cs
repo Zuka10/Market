@@ -1,4 +1,15 @@
-using Market.API.Models;
+using Market.Application.Common.Models;
+using Market.Application.DTOs.Market;
+using Market.Application.Features.Categories.Command.CreateCategory;
+using Market.Application.Features.Categories.Command.DeleteCategory;
+using Market.Application.Features.Categories.Command.UpdateCategory;
+using Market.Application.Features.Categories.Queries.GetCategories;
+using Market.Application.Features.Categories.Queries.GetCategoryById;
+using Market.Application.Features.Categories.Queries.SearchCategories;
+using Market.Application.Features.Products.Queries.GetProductsByCategory;
+using Market.Domain.Filters;
+using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Market.API.Controllers;
@@ -6,126 +17,126 @@ namespace Market.API.Controllers;
 /// <summary>
 /// Controller for managing categories.
 /// </summary>
+[Route("api/[controller]")]
 [ApiController]
-[Route("[controller]")]
-public class CategoryController : ControllerBase
+[Authorize(Roles = "Admin")]
+public class CategoryController(IMediator mediator) : ControllerBase
 {
-    private static readonly List<Category> _categories =
-    [
-        new Category
-        {
-            Id = 1,
-            Name = "Electronics",
-            Description = "Devices and gadgets"
-        },
-        new Category
-        {
-            Id = 2,
-            Name = "Books",
-            Description = "Literature and novels"
-        },
-        new Category
-        {
-            Id = 3,
-            Name = "Clothing",
-            Description = "Apparel and accessories"
-        },
-        new Category
-        {
-            Id = 4,
-            Name = "Home & Kitchen",
-            Description = "Household items and kitchenware"
-        },
-    ];
+    private readonly IMediator _mediator = mediator;
 
     /// <summary>
-    /// Gets all categories.
+    /// Retrieves all categories
     /// </summary>
-    /// <returns>List of categories.</returns>
+    /// <param name="query">Category search filters</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>List of categories</returns>
     [HttpGet]
-    public ActionResult<IEnumerable<Category>> GetAll()
+    public async Task<ActionResult<BaseResponse<PagedResult<CategoryDto>>>> GetAll(
+        [FromQuery] GetCategoriesQuery query,
+        CancellationToken cancellationToken = default)
     {
-        return Ok(_categories);
+        var categories = await _mediator.Send(query, cancellationToken);
+        return Ok(categories);
     }
 
     /// <summary>
-    /// Gets a specific category by ID.
+    /// Retrieves a specific category by its ID
     /// </summary>
-    /// <param name="id">Category ID.</param>
-    /// <returns>The matching category.</returns>
-    [HttpGet("{id}")]
-    public ActionResult<Category> GetById(int id)
+    /// <param name="id">The category ID</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>The category details</returns>
+    [HttpGet("{id:int}")]
+    public async Task<IActionResult> GetCategoryById(
+        int id,
+        CancellationToken cancellationToken = default)
     {
-        var category = _categories.FirstOrDefault(c => c.Id == id);
-        if (category is null)
-        {
-            return NotFound();
-        }
-        return Ok(category);
+        var query = new GetCategoryByIdQuery(Id: id);
+        var result = await _mediator.Send(query, cancellationToken);
+        return Ok(result);
     }
 
     /// <summary>
-    /// Creates a new category.
+    /// Creates a new category
     /// </summary>
-    /// <param name="category">Category object to create.</param>
-    /// <returns>The created category.</returns>
+    /// <param name="command">Category creation details</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>The created category</returns>
     [HttpPost]
-    public ActionResult<Category> Create([FromBody] Category category)
+    public async Task<IActionResult> CreateCategory(
+        [FromBody] CreateCategoryCommand command,
+        CancellationToken cancellationToken = default)
     {
-        if (category is null)
-        {
-            return BadRequest();
-        }
-
-        category.Id = _categories.Max(c => c.Id) + 1;
-        _categories.Add(category);
-        return CreatedAtAction(nameof(GetById), new { id = category.Id }, category);
+        var result = await _mediator.Send(command, cancellationToken);
+        return Ok(result);
     }
 
     /// <summary>
-    /// Updates an existing category.
+    /// Updates an existing category
     /// </summary>
-    /// <param name="id">ID of the category to update (from route).</param>
-    /// <param name="category">Updated category object.</param>
-    /// <returns>Returns 200 OK if successful, 404 if not found, or 400 if request is invalid.</returns>
-    /// <response code="200">A specific category.</response>
-    /// <response code="400">Category is null</response>
-    /// <response code="404">No category with the provided Id were found.</response>
-    [HttpPut("{id}")]
-    public ActionResult<Category> Update([FromRoute] int id, [FromBody] Category category)
+    /// <param name="id">The category ID to update</param>
+    /// <param name="command">Category update details</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>The updated category</returns>
+    [HttpPut("{id:int}")]
+    public async Task<IActionResult> UpdateCategory(
+        int id,
+        [FromBody] UpdateCategoryCommand command,
+        CancellationToken cancellationToken = default)
     {
-        if (category is null)
-        {
-            return BadRequest();
-        }
-
-        var existingCategory = _categories.FirstOrDefault(c => c.Id == id);
-        if (existingCategory is null)
-        {
-            return NotFound();
-        }
-
-        existingCategory.Name = category.Name;
-        existingCategory.Description = category.Description;
-
-        return Ok();
+        var updateCommand = command with { CategoryId = id };
+        var result = await _mediator.Send(updateCommand, cancellationToken);
+        return Ok(result);
     }
 
     /// <summary>
-    /// Deletes an category by ID.
+    /// Deletes a category
     /// </summary>
-    /// <param name="id">ID of the category to delete.</param>
-    /// <returns>Ok.</returns>
-    [HttpDelete("{id}")]
-    public ActionResult Delete(int id)
+    /// <param name="id">The category ID to delete</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Deletion confirmation</returns>
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> DeleteCategory(
+        int id,
+        CancellationToken cancellationToken = default)
     {
-        var category = _categories.FirstOrDefault(c => c.Id == id);
-        if (category is null)
-        {
-            return NotFound();
-        }
+        var command = new DeleteCategoryCommand(CategoryId: id);
+        var result = await _mediator.Send(command, cancellationToken);
+        return Ok(result);
+    }
 
-        _categories.Remove(category);
-        return Ok();
+    /// <summary>
+    /// Search categories by various criteria
+    /// </summary>
+    /// <param name="query">Search criteria</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Paginated list of categories matching the search criteria</returns>
+    [HttpGet("search")]
+    public async Task<IActionResult> SearchCategories(
+        [FromQuery] SearchCategoriesQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await _mediator.Send(query, cancellationToken);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Retrieves products in a specific category
+    /// </summary>
+    /// <param name="id">The category ID</param>
+    /// <param name="isAvaliable">Filter by availability status</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Paginated list of products in the specified category</returns>
+    [HttpGet("{id:int}/products")]
+    public async Task<IActionResult> GetProductsInCategory(
+        int id,
+        [FromQuery] bool isAvaliable = true,
+        CancellationToken cancellationToken = default)
+    {
+        var query = new GetProductsByCategoryQuery(
+            CategoryId: id,
+            IsAvaliable: isAvaliable);
+
+        var result = await _mediator.Send(query, cancellationToken);
+        return Ok(result);
     }
 }
