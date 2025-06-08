@@ -25,7 +25,7 @@ public class ArchitectureTests
     [Test]
     public void Application_Should_OnlyDependOn_Domain()
     {
-        var result = Types.InAssembly(typeof(Market.Application.DependecyInjection).Assembly)
+        var result = Types.InAssembly(typeof(Market.Application.DependencyInjection).Assembly)
             .ShouldNot()
             .HaveDependencyOnAny(InfrastructureNamespace, ApiNamespace)
             .GetResult();

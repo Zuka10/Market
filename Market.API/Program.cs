@@ -1,15 +1,23 @@
 using System.Reflection;
 using Market.Infrastructure;
 using Market.Application;
+using Market.Migration;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using System.Text.Json;
+using DotNetEnv;
 
 var builder = WebApplication.CreateBuilder(args);
 
+Env.Load();
+
+builder.Configuration.AddEnvironmentVariables();
+
 // Add services to the container.
 builder.Services.AddInfrastructure(builder.Configuration);
-builder.Services.AddApplication();
+builder.Services.AddApplication(builder.Configuration);
+
+builder.Services.AddMigrationRunner(builder.Configuration["ConnectionStrings:DefaultConnection"]!);
 
 builder.Services.AddControllers();
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle

@@ -10,12 +10,20 @@
 
   <ItemGroup>
     <PackageReference Include="AspNetCore.HealthChecks.SqlServer" Version="9.0.0" />
+    <PackageReference Include="DotNetEnv" Version="3.1.1" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.4.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Market.Application\Market.Application.csproj" />
     <ProjectReference Include="..\Market.Infrastructure\Market.Infrastructure.csproj" />
+    <ProjectReference Include="..\Market.Migration\Market.Migration.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update=".env">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

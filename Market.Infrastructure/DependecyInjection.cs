@@ -1,9 +1,9 @@
-﻿using Market.Domain.Abstractions.Repositories.Auth;
+﻿using Market.Domain.Abstractions;
+using Market.Domain.Abstractions.Repositories.Auth;
 using Market.Domain.Abstractions.Repositories.Market;
-using Market.Domain.Abstractions;
+using Market.Infrastructure.Data;
 using Market.Infrastructure.Data.Repositories.Auth;
 using Market.Infrastructure.Data.Repositories.Market;
-using Market.Infrastructure.Data;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -16,7 +16,7 @@ public static class DependencyInjection
         IConfiguration configuration)
     {
         // Register connection factory
-        var connectionString = configuration.GetConnectionString("DefaultConnection");
+        var connectionString = configuration["ConnectionStrings:DefaultConnection"];
         services.AddSingleton<IDbConnectionFactory>(provider =>
             new SqlConnectionFactory(connectionString!));
 
