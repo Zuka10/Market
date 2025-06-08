@@ -6,6 +6,9 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using System.Text.Json;
 using DotNetEnv;
+using Market.API.Filters;
+using Market.API;
+using Market.API.Middlewares;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -19,7 +22,11 @@ builder.Services.AddApplication(builder.Configuration);
 
 builder.Services.AddMigrationRunner(builder.Configuration["ConnectionStrings:DefaultConnection"]!);
 
-builder.Services.AddControllers();
+builder.Services.AddControllers(options =>
+{
+    // Add controller logging filter to all controllers
+    options.Filters.Add<ControllerLoggingFilter>();
+});
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
@@ -47,7 +54,14 @@ builder.Services.AddHealthChecks()
             : HealthCheckResult.Degraded($"High memory usage: {memoryMB}MB");
     });
 
+builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddScoped<ControllerLoggingFilter>();
+
 var app = builder.Build();
+
+app.UseMiddleware<RequestLoggingMiddleware>();
+app.UseExceptionHandler();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
