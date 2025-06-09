@@ -1,5 +1,15 @@
 ﻿using Market.API.Models;
+using Market.Application.Common.Models;
+using Market.Application.DTOs.Market;
+using Market.Application.Features.Products.Commands.CreateProduct;
+using Market.Application.Features.Products.Commands.DeleteProduct;
+using Market.Application.Features.Products.Commands.UpdateProduct;
+using Market.Application.Features.Products.Queries.GetProductById;
+using Market.Application.Features.Products.Queries.GetProducts;
+using Market.Domain.Filters;
+using MediatR;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.OpenApi.Any;
 
 namespace Market.API.Controllers;
 
@@ -8,65 +18,19 @@ namespace Market.API.Controllers;
 /// </summary>
 [Route("api/[controller]")]
 [ApiController]
-public class ProductController : ControllerBase
+public class ProductController(IMediator mediator) : ControllerBase
 {
-    private static readonly List<Product> _products =
-    [
-        new Product
-        {
-            Id = 1,
-            Name = "Laptop",
-            Description = "High-performance laptop",
-            Price = 999.99m,
-            Stock = 10,
-            CategoryId = 1,
-        },
-        new Product
-        {
-            Id = 2,
-            Name = "Smartphone",
-            Description = "Latest model smartphone",
-            Price = 699.99m,
-            Stock = 20,
-            CategoryId = 1,
-        },
-        new Product
-        {
-            Id = 3,
-            Name = "Novel",
-            Description = "Bestselling novel",
-            Price = 19.99m,
-            Stock = 50,
-            CategoryId = 2,
-        },
-        new Product
-        {
-            Id = 4,
-            Name = "T-shirt",
-            Description = "Comfortable cotton t-shirt",
-            Price = 15.99m,
-            Stock = 100,
-            CategoryId = 3,
-        },
-        new Product
-        {
-            Id = 5,
-            Name = "Blender",
-            Description = "High-speed blender",
-            Price = 49.99m,
-            Stock = 30,
-            CategoryId = 4,
-        },
-    ];
+    private readonly IMediator _mediator = mediator;
 
     /// <summary>
-    /// Gets all products.
+    /// Gets all products with optional filtering and pagination.
     /// </summary>
-    /// <returns>List of products.</returns>
+    /// <returns>Paged list of products</returns>
     [HttpGet]
-    public ActionResult<IEnumerable<Product>> GetAll()
+    public async Task<ActionResult<BaseResponse<PagedResult<ProductDto>>>> GetAll([FromQuery] GetProductsQuery query)
     {
-        return Ok(_products);
+        var products = await _mediator.Send(query);
+        return Ok(products);
     }
 
     /// <summary>
@@ -75,31 +39,21 @@ public class ProductController : ControllerBase
     /// <param name="id">Product ID.</param>
     /// <returns>The matching product.</returns>
     [HttpGet("{id}")]
-    public ActionResult<Product> GetById(int id)
+    public async Task<ActionResult<Product>> GetById(int id)
     {
-        var product = _products.FirstOrDefault(p => p.Id == id);
-        if (product is null)
-        {
-            return NotFound();
-        }
+        var product = await _mediator.Send(new GetProductByIdQuery(id));
         return Ok(product);
     }
 
     /// <summary>
     /// Creates a new product.
     /// </summary>
-    /// <param name="product">Product object to create.</param>
+    /// <param name="command">Product object to create.</param>
     /// <returns>The created product.</returns>
     [HttpPost]
-    public ActionResult<Product> Create([FromBody] Product product)
+    public ActionResult<Product> Create([FromBody] CreateProductCommand command)
     {
-        if (product is null)
-        {
-            return BadRequest();
-        }
-
-        product.Id = _products.Max(p => p.Id) + 1;
-        _products.Add(product);
+        var product = _mediator.Send(command);
         return CreatedAtAction(nameof(GetById), new { id = product.Id }, product);
     }
 
@@ -107,32 +61,16 @@ public class ProductController : ControllerBase
     /// Updates an existing product.
     /// </summary>
     /// <param name="id">ID of the product to update (from route).</param>
-    /// <param name="product">Updated product object.</param>
+    /// <param name="command">Updated product object.</param>
     /// <returns>Returns 200 OK if successful, 404 if not found, or 400 if request is invalid.</returns>
     /// <response code="200">A specific category.</response>
     /// <response code="400">Category is null</response>
     /// <response code="404">No category with the provided Id were found.</response>
     [HttpPut("{id}")]
-    public ActionResult<Product> Update([FromRoute] int id, [FromBody] Product product)
+    public async Task<ActionResult<Product>> Update([FromRoute] int id, [FromBody] UpdateProductCommand command)
     {
-        if (product is null)
-        {
-            return BadRequest();
-        }
-
-        var existingProduct = _products.FirstOrDefault(p => p.Id == id);
-        if (existingProduct is null)
-        {
-            return NotFound();
-        }
-
-        existingProduct.Name = product.Name;
-        existingProduct.Description = product.Description;
-        existingProduct.Price = product.Price;
-        existingProduct.Stock = product.Stock;
-        existingProduct.CategoryId = product.CategoryId;
-
-        return Ok();
+        var response = await _mediator.Send(command);
+        return Ok(response);
     }
 
     /// <summary>
@@ -141,15 +79,10 @@ public class ProductController : ControllerBase
     /// <param name="id">ID of the product to delete.</param>
     /// <returns>No content.</returns>
     [HttpDelete("{id}")]
-    public ActionResult Delete(int id)
+    [ProducesResponseType(typeof(void), 200)]
+    public async Task<ActionResult> Delete(int id)
     {
-        var product = _products.FirstOrDefault(p => p.Id == id);
-        if (product is null)
-        {
-            return NotFound();
-        }
-
-        _products.Remove(product);
-        return Ok();
+        await _mediator.Send(new DeleteProductCommand(id));
+        return NoContent();
     }
 }
