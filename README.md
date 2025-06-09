@@ -27,14 +27,7 @@ A full-featured market system with product catalog, order management, user accou
 
 ### Prerequisites
 1. SQL Server (LocalDB, Express, or Full)
-2. Update connection string in `appsettings.json`:
-```json
-{
-  "ConnectionStrings": {
-    "DefaultConnection": "Server=(localdb)\\mssqllocaldb;Database=MarketManagementSystem;Trusted_Connection=true;MultipleActiveResultSets=true"
-  }
-}
-```
+2. Update connection string in `.env`
 
 ### Database Setup
 Run the main database schema creation script:
