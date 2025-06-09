@@ -17,6 +17,7 @@ public class MigrationRunner(IDbConnection connection, ILogger<MigrationRunner> 
 
     public async Task RunMigrationsAsync()
     {
+        await EnsureConnectionOpenAsync();
         await EnsureMigrationHistoryTableExistsAsync();
 
         var appliedMigrations = await GetAppliedMigrationsAsync();
@@ -39,6 +40,7 @@ public class MigrationRunner(IDbConnection connection, ILogger<MigrationRunner> 
 
     public async Task RollbackToVersionAsync(string version)
     {
+        await EnsureConnectionOpenAsync();
         var appliedMigrations = await GetAppliedMigrationsAsync();
         var migrationsToRollback = _migrations
             .Where(m => appliedMigrations.Contains(m.Version) &&
@@ -54,6 +56,7 @@ public class MigrationRunner(IDbConnection connection, ILogger<MigrationRunner> 
 
     public async Task<IEnumerable<MigrationInfo>> GetMigrationHistoryAsync()
     {
+        await EnsureConnectionOpenAsync();
         await EnsureMigrationHistoryTableExistsAsync();
 
         const string sql = @"
@@ -73,10 +76,11 @@ public class MigrationRunner(IDbConnection connection, ILogger<MigrationRunner> 
 
     private async Task ExecuteMigrationAsync(IMigration migration)
     {
+        await EnsureConnectionOpenAsync();
         using var transaction = _connection.BeginTransaction();
         try
         {
-            _logger.LogInformation("Applying migration {MigrationVersion}: {MigrationDescription}", [migration.Version, migration.Description]);
+            _logger.LogInformation("Applying migration {MigrationVersion}: {MigrationDescription}", migration.Version, migration.Description);
 
             await migration.UpAsync(_connection, transaction);
             await RecordMigrationAsync(migration, transaction);
@@ -94,16 +98,17 @@ public class MigrationRunner(IDbConnection connection, ILogger<MigrationRunner> 
 
     private async Task RollbackMigrationAsync(IMigration migration)
     {
+        await EnsureConnectionOpenAsync();
         using var transaction = _connection.BeginTransaction();
         try
         {
-            _logger.LogInformation("Rolling back migration {MigrationVersion}: {MigrationDescription}", [migration.Version, migration.Description]);
+            _logger.LogInformation("Rolling back migration {MigrationVersion}: {MigrationDescription}", migration.Version, migration.Description);
 
             await migration.DownAsync(_connection, transaction);
             await RemoveMigrationRecordAsync(migration.Version, transaction);
 
             transaction.Commit();
-            _logger.LogInformation(message: "Successfully rolled back migration {MigrationVersion}", migration.Version);
+            _logger.LogInformation("Successfully rolled back migration {MigrationVersion}", migration.Version);
         }
         catch (Exception ex)
         {
@@ -115,20 +120,30 @@ public class MigrationRunner(IDbConnection connection, ILogger<MigrationRunner> 
 
     private async Task EnsureMigrationHistoryTableExistsAsync()
     {
+        await EnsureConnectionOpenAsync();
         const string sql = @"
-                IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='__MigrationHistory' AND xtype='U')
-                CREATE TABLE __MigrationHistory (
-                    Version NVARCHAR(50) PRIMARY KEY,
-                    Description NVARCHAR(255) NOT NULL,
-                    AppliedAt DATETIME2 NOT NULL,
-                    CheckSum NVARCHAR(64) NOT NULL
-                )";
+            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='__MigrationHistory' AND xtype='U')
+            CREATE TABLE __MigrationHistory (
+                Version NVARCHAR(50) PRIMARY KEY,
+                Description NVARCHAR(255) NOT NULL,
+                AppliedAt DATETIME2 NOT NULL,
+                CheckSum NVARCHAR(64) NOT NULL
+            )";
 
         await _connection.ExecuteAsync(sql);
     }
 
+    private async Task EnsureConnectionOpenAsync()
+    {
+        if (_connection.State != ConnectionState.Open)
+        {
+            _connection.Open();
+        }
+    }
+
     private async Task<List<string>> GetAppliedMigrationsAsync()
     {
+        await EnsureConnectionOpenAsync();
         const string sql = "SELECT Version FROM __MigrationHistory ORDER BY Version";
         return (await _connection.QueryAsync<string>(sql)).ToList();
     }

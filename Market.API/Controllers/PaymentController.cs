@@ -1,5 +1,18 @@
-﻿using Market.API.Models;
-using Market.API.Models.Enums;
+﻿using Market.Application.Common.Models;
+using Market.Application.DTOs.Market;
+using Market.Application.Features.Payments.Commands.CancelPayment;
+using Market.Application.Features.Payments.Commands.CreatePayment;
+using Market.Application.Features.Payments.Commands.UpdatePayment;
+using Market.Application.Features.Payments.Commands.UpdatePaymentStatus;
+using Market.Application.Features.Payments.Queries.GetPaymentById;
+using Market.Application.Features.Payments.Queries.GetPayments;
+using Market.Application.Features.Payments.Queries.GetPaymentsByMethod;
+using Market.Application.Features.Payments.Queries.GetPaymentsByOrder;
+using Market.Application.Features.Payments.Queries.GetPaymentsByStatus;
+using Market.Domain.Enums;
+using Market.Domain.Filters;
+using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Market.API.Controllers;
@@ -9,139 +22,154 @@ namespace Market.API.Controllers;
 /// </summary>
 [Route("api/[controller]")]
 [ApiController]
-public class PaymentController : ControllerBase
+[Authorize(Roles = "Admin")]
+public class PaymentController(IMediator mediator) : ControllerBase
 {
-    private static readonly List<Payment> _payments =
-    [
-         new Payment
-         {
-             Id = 1,
-             PaymentMethod = PaymentType.CreditCard,
-             Amount = 150.00m,
-             PaymentDate = DateTime.UtcNow,
-             Status = PaymentStatus.Completed,
-             OrderId = 1
-         },
-         new Payment
-         {
-             Id = 2,
-             PaymentMethod = PaymentType.Cash,
-             Amount = 75.50m,
-             PaymentDate = DateTime.UtcNow,
-             Status = PaymentStatus.Pending,
-             OrderId = 2
-         },
-         new Payment
-         {
-             Id = 3,
-             PaymentMethod = PaymentType.Other,
-             Amount = 200.00m,
-             PaymentDate = DateTime.UtcNow,
-             Status = PaymentStatus.Failed,
-             OrderId = 3
-         },
-         new Payment
-         {
-             Id = 4,
-             PaymentMethod = PaymentType.Cash,
-             Amount = 50.00m,
-             PaymentDate = DateTime.UtcNow,
-             Status = PaymentStatus.Completed,
-             OrderId = 4
-         },
-    ];
+    private readonly IMediator _mediator = mediator;
 
     /// <summary>
-    /// Gets all payments.
+    /// Retrieves a paginated and filtered list of payments
     /// </summary>
-    /// <returns>List of payments.</returns>
+    /// <param name="query">Payment search filters</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Paginated list of payments</returns>
     [HttpGet]
-    public ActionResult<IEnumerable<Payment>> GetAll()
+    public async Task<ActionResult<BaseResponse<PagedResult<PaymentDto>>>> GetAll(
+        [FromQuery] GetPaymentsQuery query,
+        CancellationToken cancellationToken = default)
     {
-        return Ok(_payments);
+        var payments = await _mediator.Send(query, cancellationToken);
+        return Ok(payments);
     }
 
     /// <summary>
-    /// Gets a specific payment by ID.
+    /// Retrieves a specific payment by its ID
     /// </summary>
-    /// <param name="id">Payment ID.</param>
-    /// <returns>The matching payment.</returns>
-    [HttpGet("{id}")]
-    public ActionResult<Payment> GetById(int id)
+    /// <param name="id">The payment ID</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>The payment details</returns>
+    [HttpGet("{id:int}")]
+    public async Task<IActionResult> GetPaymentById(
+        int id,
+        CancellationToken cancellationToken = default)
     {
-        var payment = _payments.FirstOrDefault(p => p.Id == id);
-        if (payment is null)
-        {
-            return NotFound();
-        }
-        return Ok(payment);
+        var query = new GetPaymentByIdQuery(Id: id);
+        var result = await _mediator.Send(query, cancellationToken);
+        return Ok(result);
     }
 
     /// <summary>
-    /// Creates a new payment.
+    /// Creates a new payment
     /// </summary>
-    /// <param name="payment">Payment object to create.</param>
-    /// <returns>The created payment.</returns>
+    /// <param name="command">Payment creation details</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>The created payment</returns>
     [HttpPost]
-    public ActionResult<Payment> Create([FromBody] Payment payment)
+    public async Task<IActionResult> CreatePayment(
+        [FromBody] CreatePaymentCommand command,
+        CancellationToken cancellationToken = default)
     {
-        if (payment is null)
-        {
-            return BadRequest("Payment cannot be null.");
-        }
-
-        payment.Id = _payments.Max(p => p.Id) + 1;
-        _payments.Add(payment);
-        return CreatedAtAction(nameof(GetById), new { id = payment.Id }, payment);
+        var result = await _mediator.Send(command, cancellationToken);
+        return Ok(result);
     }
 
     /// <summary>
-    /// Updates an existing payment.
+    /// Updates an existing payment
     /// </summary>
-    /// <param name="id">ID of the payment to update (from route).</param>
-    /// <param name="payment">Updated payment object.</param>
-    /// <returns>Returns 200 OK if successful, 404 if not found, or 400 if request is invalid.</returns>
-    /// <response code="200">A specific payment.</response>
-    /// <response code="400">Payment is null</response>
-    /// <response code="404">No payment with the provided Id were found.</response>
-    [HttpPut("{id}")]
-    public ActionResult Update([FromRoute] int id, [FromBody] Payment payment)
+    /// <param name="id">The payment ID to update</param>
+    /// <param name="command">Payment update details</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>The updated payment</returns>
+    [HttpPut("{id:int}")]
+    public async Task<IActionResult> UpdatePayment(
+        int id,
+        [FromBody] UpdatePaymentCommand command,
+        CancellationToken cancellationToken = default)
     {
-        if (payment is null)
-        {
-            return BadRequest("Payment cannot be null.");
-        }
-
-        var existingPayment = _payments.FirstOrDefault(p => p.Id == id);
-        if (existingPayment is null)
-        {
-            return NotFound();
-        }
-
-        existingPayment.PaymentMethod = payment.PaymentMethod;
-        existingPayment.Amount = payment.Amount;
-        existingPayment.PaymentDate = payment.PaymentDate;
-        existingPayment.Status = payment.Status;
-
-        return Ok();
+        var updateCommand = command with { PaymentId = id };
+        var result = await _mediator.Send(updateCommand, cancellationToken);
+        return Ok(result);
     }
 
+    /// <summary>
+    /// Cancels a payment
+    /// </summary>
+    /// <param name="id">The payment ID to cancel</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Cancellation confirmation</returns>
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> CancelPayment(
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        var command = new CancelPaymentCommand(PaymentId: id);
+        var result = await _mediator.Send(command, cancellationToken);
+        return Ok(result);
+    }
 
     /// <summary>
-    /// Deletes an payment by ID.
+    /// Retrieves payments for a specific order
     /// </summary>
-    /// <param name="id">ID of the payment to delete.</param>
-    /// <returns>No content.</returns>
-    [HttpDelete("{id}")]
-    public ActionResult Delete(int id)
+    /// <param name="id">The order ID</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Paginated list of payments for the order</returns>
+    [HttpGet("order/{id:int}")]
+    public async Task<IActionResult> GetPaymentsByOrder(
+        int id,
+        CancellationToken cancellationToken = default)
     {
-        var payment = _payments.FirstOrDefault(p => p.Id == id);
-        if (payment is null)
-        {
-            return NotFound();
-        }
+        var query = new GetPaymentsByOrderQuery(OrderId: id);
+        var result = await _mediator.Send(query, cancellationToken);
+        return Ok(result);
+    }
 
-        _payments.Remove(payment);
-        return Ok();
+    /// <summary>
+    /// Retrieves payments by payment method
+    /// </summary>
+    /// <param name="method">The payment method</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Paginated list of payments with the specified method</returns>
+    [HttpGet("method/{method}")]
+    public async Task<IActionResult> GetPaymentsByMethod(
+        PaymentMethod method,
+        CancellationToken cancellationToken = default)
+    {
+        var query = new GetPaymentsByMethodQuery(PaymentMethod: method);
+        var result = await _mediator.Send(query, cancellationToken);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Retrieves payments by status
+    /// </summary>
+    /// <param name="status">The payment status</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Paginated list of payments with the specified status</returns>
+    [HttpGet("status/{status}")]
+    public async Task<IActionResult> GetPaymentsByStatus(
+        PaymentStatus status,
+        CancellationToken cancellationToken = default)
+    {
+        var query = new GetPaymentsByStatusQuery(Status: status);
+        var result = await _mediator.Send(query, cancellationToken);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Updates the status of a payment
+    /// </summary>
+    /// <param name="id">The payment ID</param>
+    /// <param name="command">Status update details</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Updated payment with new status</returns>
+    [HttpPatch("{id:int}/status")]
+    public async Task<IActionResult> UpdatePaymentStatus(
+        int id,
+        [FromBody] UpdatePaymentStatusCommand command,
+        CancellationToken cancellationToken = default)
+    {
+        var updateCommand = command with { PaymentId = id };
+        var result = await _mediator.Send(updateCommand, cancellationToken);
+        return Ok(result);
     }
 }
